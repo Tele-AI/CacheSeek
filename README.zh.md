@@ -72,10 +72,10 @@ CacheSeek 是推理引擎与分布式存储之间的缓存**中间层**，把跨
 
 | | | | |
 |:---:|:---:|:---:|:---:|
-| ![baseline 1](./docs/assets/examples/1-baseline.gif) | ![baseline 2](./docs/assets/examples/2-baseline.gif) | ![baseline 3](./docs/assets/examples/3-baseline.gif) | ![baseline 4](./docs/assets/examples/4-baseline.gif) |
-| ![cache 1](./docs/assets/examples/1-cache.gif) | ![cache 2](./docs/assets/examples/2-cache.gif) | ![cache 3](./docs/assets/examples/3-cache.gif) | ![cache 4](./docs/assets/examples/4-cache.gif) |
+| ![robot baseline](./docs/assets/examples/robot-baseline.gif) | ![balloon baseline](./docs/assets/examples/balloon-baseline.gif) | ![kite baseline](./docs/assets/examples/kite-baseline.gif) | ![umbrella baseline](./docs/assets/examples/umbrella-baseline.gif) |
+| ![robot cache](./docs/assets/examples/robot-cache.gif) | ![balloon cache](./docs/assets/examples/balloon-cache.gif) | ![kite cache](./docs/assets/examples/kite-cache.gif) | ![umbrella cache](./docs/assets/examples/umbrella-cache.gif) |
 
-<p align="center"><em>Wan2.2-14B T2V，2×80GB Hopper。上排：baseline（完整去噪）。下排：CacheSeek 命中，跳过早期步。同列共享同一 prompt。</em></p>
+<p align="center"><em>Wan2.2-14B T2V，2×80GB Hopper。上排：冷启动完整去噪（donor）。下排：近似的后续请求 —— 命中缓存、复用 donor 的早期去噪 latent 并跳过前 K 步。每列一个场景。</em></p>
 
 两类复用都可持久化到 **Fluxon**（分布式）或本地磁盘；标准化的迁移 + 断点恢复接口让长程会话在实例间路由，而不必绑定单卡。
 
