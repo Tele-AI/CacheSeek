@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Core structural types for world_kv. Pure data — no torch, no I/O.
 
 A cache ROW = KEY + VALUE:
@@ -8,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from cacheseek.stores.base import BlobHandle, Tier  # defined in the storage layer; re-exported here for compatibility
+from cacheseek.stores.base import BlobHandle, Tier  # noqa: F401  (re-exported for compatibility)
 
 # A single discrete action (keyboard-style ↑↓←→ … or action code). Discrete ⇒ exact key, no float ulp.
 ActionKey = int | str
@@ -28,8 +30,8 @@ class TrieNode:
     node_key: NodeKey
     action: ActionKey                 # verified on hit (cheap collision guard)
     depth: int                        # = seg_index; sets RoPE time-axis origin + write position
-    parent: "TrieNode | None"
-    children: dict[ActionKey, "TrieNode"] = field(default_factory=dict)
+    parent: TrieNode | None
+    children: dict[ActionKey, TrieNode] = field(default_factory=dict)
     skeleton: Skeleton | None = None
     blob: BlobHandle | None = None     # None ⇒ "skeleton hit" (KV evicted; resume must recompute)
     ref_count: int = 0                 # >0 while materialize/write/offload in flight; eviction must not reclaim
@@ -38,4 +40,10 @@ class TrieNode:
 
     @property
     def has_kv(self) -> bool:
+        """True iff this node has a published (ready) heavy KV blob.
+
+        False after blob eviction (skeleton-only) or while an async write is in
+        flight; lookup descends only through has_kv nodes so prefix reuse stops
+        at the deepest published node.
+        """
         return self.blob is not None and self.blob.ready

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """CacheServiceFactory — TeleFuser-specific factory for cacheseek lifecycle.
 
 Returns a ``(CacheService, TeleFuserCacheAdapter)`` pair.
@@ -25,26 +27,23 @@ from __future__ import annotations
 import sys
 from dataclasses import fields
 from pathlib import Path
-from typing import Optional, Tuple
 
 from loguru import logger
-
-from cacheseek.service.ppl_loader import import_function_from_file
 
 from cacheseek.adapters.telefuser.adapter import TeleFuserCacheAdapter
 from cacheseek.backends.audit.jsonl import JSONLAuditLog
 from cacheseek.backends.metadata.local import LocalCacheMetadataManager
+from cacheseek.reuse.approximate.strategy import VideoBasedApproximateCache
 from cacheseek.service.config import CacheConfig, CacheMode
 from cacheseek.service.connection import ConnectionManager
 from cacheseek.service.lifecycle import CacheService
 from cacheseek.service.log_monitor import setup_cache_log_sink
-from cacheseek.reuse.approximate.strategy import VideoBasedApproximateCache
-
+from cacheseek.service.ppl_loader import import_function_from_file
 
 _BANNER_SEP_WIDTH = 50  # mirrors telefuser.utils.logging._SEP_WIDTH
 
 
-def _print_cache_service_banner(config: "CacheConfig", source: str) -> None:
+def _print_cache_service_banner(config: CacheConfig, source: str) -> None:
     """Print Cache Service config on startup, mirroring TeleFuser Logging banner style."""
     # Gate ANSI escapes on TTY so piped / log-captured banners stay plain text
     # instead of leaking '\x1b[1;36m...' sequences.
@@ -120,10 +119,10 @@ class CacheServiceFactory:
 
     @staticmethod
     def create_cache_service(
-        ppl_file: Optional[str],
-        enable_latent_cache: Optional[bool],
-        cache_mode: Optional[str] = None,
-    ) -> Optional[Tuple[CacheService, TeleFuserCacheAdapter]]:
+        ppl_file: str | None,
+        enable_latent_cache: bool | None,
+        cache_mode: str | None = None,
+    ) -> tuple[CacheService, TeleFuserCacheAdapter] | None:
         """Build the lifecycle pair: ``(CacheService, TeleFuserCacheAdapter)``.
 
         Returns ``None`` (with a warning logged) if cache deps are missing,

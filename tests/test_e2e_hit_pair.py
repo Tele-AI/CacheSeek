@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """End-to-end hit-pair test against a live cache pool.
 
 Verifies CacheSeek is byte-stream compatible with the upstream cache
@@ -20,7 +22,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 
 # Skip if not on H800 host (no fluxon / no model weights).
 # Paths default to placeholders; the test is gated by XCACHE_E2E_HITPAIR=1
@@ -95,11 +96,11 @@ def _build_cache_config(tmp_path: Path, *, cache_mode: str):
 
 
 def _build_cache_service(tmp_path: Path, *, cache_mode: str):
+    from cacheseek.backends.metadata import LocalCacheMetadataManager
+    from cacheseek.reuse.approximate.strategy import VideoBasedApproximateCache
     from cacheseek.service.config import CacheConfig
     from cacheseek.service.connection import ConnectionManager
     from cacheseek.service.lifecycle import CacheService
-    from cacheseek.backends.metadata import LocalCacheMetadataManager
-    from cacheseek.reuse.approximate.strategy import VideoBasedApproximateCache
 
     cfg: CacheConfig = _build_cache_config(tmp_path, cache_mode=cache_mode)
     cache_dir = tmp_path / "cacheseek_e2e"

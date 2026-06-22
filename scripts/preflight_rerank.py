@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Preflight rerank scoring — confirm a (donor, request) pair will hit before generating.
 
 Each Wan2.2-T2V video is ~5 min; rerank scoring is ~1s/pair, so gating a run

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """TeleFuser binding integration tests for the rolling window (sink=3 frames,
 local_attn=7 frames including sink).
 
@@ -20,7 +22,11 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from cacheseek.reuse.exact_prefix import InMemoryTierStore, NamespaceForest, WorldKVManager  # noqa: E402
+from cacheseek.reuse.exact_prefix import (  # noqa: E402
+    InMemoryTierStore,
+    NamespaceForest,
+    WorldKVManager,
+)
 from cacheseek.reuse.exact_prefix.telefuser_lingbot import (  # noqa: E402
     LingBotWorldKVBinding,
     make_rolling_config,
@@ -174,7 +180,7 @@ def test_warm_ring_equals_cold_ring_all_resume_points():
         b = LingBotWorldKVBinding(mgr, forest, ingest_enabled=False)
         b.on_runtime_created(rt, make_session(42))
         assert b.last_fast_forward == K, f"K={K}: matched {b.last_fast_forward}"
-        for layer, (kv, r) in enumerate(zip(rt.self_kv_cache, snaps[K])):
+        for layer, (kv, r) in enumerate(zip(rt.self_kv_cache, snaps[K], strict=False)):
             le = r["le"]
             assert int(kv["local_end_index"][0]) == le, f"K={K} layer{layer} local_end"
             assert int(kv["global_end_index"][0]) == r["ge"], f"K={K} layer{layer} global_end"
@@ -199,7 +205,7 @@ def test_branch_resume_rng_aligned():
 
     for i in (2, 3):
         assert torch.equal(out_warm[i], out_cold[i]), f"chunk {i} diverged: RNG misaligned"
-    for lw, lc in zip(rt_warm.self_kv_cache, rt_cold.self_kv_cache):
+    for lw, lc in zip(rt_warm.self_kv_cache, rt_cold.self_kv_cache, strict=False):
         le = int(lc["local_end_index"][0])
         assert torch.equal(lw["k"][:, :le], lc["k"][:, :le])  # ring also matches after continuation
 

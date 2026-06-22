@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """TeleFuser LingBot-World-Fast integration (duck-typed; does not import telefuser).
 
 TeleFuser needs only two hooks:
@@ -87,6 +89,21 @@ SESSION_KEY_FIELDS = (
 
 
 def session_root_hash(session_config: Any, *, model_fingerprint: bytes) -> bytes:
+    """Compute the namespace root_hash for a TeleFuser session.
+
+    Combines an image fingerprint (mode, size, raw pixel bytes), a normalized
+    prompt fingerprint, and a config_blob_hash over the computation-affecting
+    SESSION_KEY_FIELDS plus the model weights fingerprint. Two sessions share a
+    namespace (and thus may reuse KV) iff all three match.
+
+    Args:
+        session_config: TeleFuser session config (duck-typed; needs image, prompt,
+            and the SESSION_KEY_FIELDS attributes).
+        model_fingerprint: Weights/version fingerprint folded into config_blob_hash.
+
+    Returns:
+        The root_hash identifying this world.
+    """
     image = session_config.image
     image_fp = sha256(
         b"img",
@@ -169,6 +186,14 @@ class _RingKVWindow:
         )
 
     def seed_layer(self, layer: int, blobs: list[tuple[int, Any]], depth: int) -> None:
+        """Write cached KV into the runtime's self_kv_cache for one layer, reproducing
+        the physical ring layout (per-frame token slices) a cold run would have at chunk K.
+
+        Raises:
+            KeyError: if a frame's source chunk is missing from blobs (the manager
+                window did not provide it; rolling config likely mismatches runtime
+                KV geometry).
+        """
         rt = self._rt
         ft, c = rt.frame_tokens, rt.chunk_size
         kv = rt.self_kv_cache[layer]
@@ -192,6 +217,8 @@ class _RingKVWindow:
         self._local_end_tokens = len(frames) * ft
 
     def set_resume_depth(self, depth: int) -> None:
+        """Set each layer's global_end_index (logical, F*ft) and local_end_index
+        (physical buffer fill from the last seed) so the DiT resumes at chunk depth+1."""
         rt = self._rt
         global_end = (depth + 1) * rt.chunk_size * rt.frame_tokens
         for kv in rt.self_kv_cache:
@@ -212,6 +239,20 @@ class LingBotWorldKVBinding:
         snapshot_path: str | None = None,
         snapshot_on_finalize: bool = False,
     ) -> None:
+        """Create a per-session binding holding this session's trie cursor.
+
+        If snapshot_path is set and the forest is empty at startup, loads the index
+        snapshot to enable cross-process prefix hits (only meaningful with a
+        persistent store).
+
+        Args:
+            manager: The WorldKVManager driving lookup/materialize/ingest.
+            forest: The shared namespace forest.
+            model_fingerprint: Weights/version fingerprint folded into root_hash.
+            ingest_enabled: Whether finalized chunks are written back to the cache.
+            snapshot_path: Optional path for the forest index snapshot.
+            snapshot_on_finalize: Whether to flush the snapshot after each finalize.
+        """
         self.mgr = manager
         self.forest = forest
         self.strategy = ExactPrefixStrategy(
@@ -244,6 +285,16 @@ class LingBotWorldKVBinding:
 
     # ---------------------------------------------------------- hook 1: after runtime is built
     def on_runtime_created(self, runtime: Any, session_config: Any) -> None:
+        """TeleFuser hook 1: after the runtime is built, attempt prefix fast-forward.
+
+        Resolves the namespace, derives per-chunk action keys and their node-key
+        chain, then runs the shared Strategy lookup. On a hit it materializes the
+        cached KV into the runtime window, stashes the skipped chunks' latents for
+        the decode-only fast path (``runtime.world_kv_cached_latents``), and burns
+        the RNG draws for the skipped chunks so the noise stream stays aligned for
+        bit-exact replay from chunk K. Falls back to a cold run (parent = root,
+        last_fast_forward = 0) on miss or an incomplete window.
+        """
         from .keys import build_action_chain
 
         root = session_root_hash(

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Branch coverage for ``VideoBasedApproximateCache.save`` + private helpers.
 
 Save has 9 distinct branches across the latent-persistence path and the
@@ -8,8 +10,6 @@ small unit tests because at least one of them was a real bug source
 """
 from __future__ import annotations
 
-import io
-
 import pytest
 import torch
 from PIL import Image
@@ -17,9 +17,7 @@ from PIL import Image
 from cacheseek.service.cache_types import VectorSearchResult
 from cacheseek.service.outputs import ModelOutputs
 from cacheseek.service.query import CacheQuery
-
 from tests._strategy_fixtures import make_strategy
-
 
 pytestmark = pytest.mark.smoke
 

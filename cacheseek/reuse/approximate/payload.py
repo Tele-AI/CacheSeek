@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """VideoApproxPayload — concrete Payload for VideoBasedApproximateCache.
 
 Encapsulates KV key naming convention ``{cache_id}_step{N}`` and torch.save
@@ -12,8 +14,8 @@ serialization. Per-step values are kept as ``Union[Tensor, bytes]``:
 from __future__ import annotations
 
 import io
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterator, Optional, Tuple, Union
 
 import torch
 
@@ -29,7 +31,7 @@ class VideoApproxPartialSpec:
     steps: tuple[int, ...]
 
     @classmethod
-    def single(cls, step: int) -> "VideoApproxPartialSpec":
+    def single(cls, step: int) -> VideoApproxPartialSpec:
         """Convenience: load exactly one step (the common case at lookup hit)."""
         return cls(steps=(int(step),))
 
@@ -46,9 +48,18 @@ class VideoApproxPayload:
     The ``step_to_latents`` field carries either Tensors (save side, before
     serialization) or raw bytes (load side, before deserialization). The
     asymmetry lets us serialize / deserialize lazily — see module docstring.
+
+    Shapes:
+        step_to_latents[k]: (B, C, T, H, W) — one diffusion latent per key step k
+            B     batch; 1 for a cached donor          — stable
+            C     VAE latent channels                  — stable per model
+            T     latent frames                        — stable per model profile
+            H, W  latent spatial dims                  — vary with output resolution
+        At a fixed model profile only H, W vary across requests; a reuse candidate
+        must match on the stable dims for its latents to be substitutable.
     """
     cache_id: str
-    step_to_latents: Dict[int, Union[torch.Tensor, bytes]]
+    step_to_latents: dict[int, torch.Tensor | bytes]
     schema_version: str = "video_approx_v1"
 
     @property
@@ -71,7 +82,7 @@ class VideoApproxPayload:
                 total += len(value)
         return total
 
-    def to_kv_entries(self) -> Iterator[Tuple[str, bytes]]:
+    def to_kv_entries(self) -> Iterator[tuple[str, bytes]]:
         """Yield ``(kv_key, bytes)`` pairs for KVStore.put.
 
         Lazy-serializes Tensors on demand so the caller can ``put`` one
@@ -93,9 +104,9 @@ class VideoApproxPayload:
     def from_kv_loader(
         cls,
         cache_id: str,
-        kv_loader: Callable[[str], Optional[bytes]],
+        kv_loader: Callable[[str], bytes | None],
         partial_spec: VideoApproxPartialSpec,
-    ) -> "VideoApproxPayload":
+    ) -> VideoApproxPayload:
         """Reconstruct a payload by loading the steps in ``partial_spec``.
 
         ``partial_spec`` is required (no default) so callers cannot
@@ -109,7 +120,7 @@ class VideoApproxPayload:
                 "use VideoApproxPartialSpec.single(step) for one step or "
                 "VideoApproxPartialSpec(steps=(...)) for multiple."
             )
-        step_to_latents: Dict[int, Union[torch.Tensor, bytes]] = {}
+        step_to_latents: dict[int, torch.Tensor | bytes] = {}
         for step in partial_spec.steps:
             data = kv_loader(f"{cache_id}_step{int(step)}")
             if data is not None:

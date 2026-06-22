@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Branch coverage for ``VideoBasedApproximateCache.lookup``.
 
 The method has 15 distinct return paths (14 misses + 1 hit). Each test
@@ -16,13 +18,11 @@ import torch
 
 from cacheseek.service.query import CacheQuery
 from cacheseek.service.result import LookupResult, SkipStep
-
 from tests._strategy_fixtures import (
     StubReranker,
     make_search_result,
     make_strategy,
 )
-
 
 pytestmark = pytest.mark.smoke
 
@@ -113,7 +113,7 @@ async def test_lookup_miss_rerank_scores_length_mismatch() -> None:
     # catches strategy exceptions and returns miss, but at the strategy
     # level the exception bubbles. We assert the exception bubbles, since
     # the strategy unit-test scope ends there.
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         await kit.strategy.lookup(_query())
 
 

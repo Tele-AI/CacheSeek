@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """cacheseek core Protocol surface — contracts for backends and strategies.
 
 This package collects the Protocols that define cacheseek's core boundary:

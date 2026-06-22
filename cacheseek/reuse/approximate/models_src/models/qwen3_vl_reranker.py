@@ -1,3 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
+
+# Adapted from the Qwen3-VL-Reranker reference implementation
+# (Qwen team, Alibaba Cloud; https://huggingface.co/Qwen/Qwen3-VL-Reranker-2B)
+# and HuggingFace Transformers (https://github.com/huggingface/transformers),
+# both licensed under the Apache License, Version 2.0. Modified for CacheSeek.
+
 import logging
 import os
 import unicodedata

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """KVStore Protocol — opaque byte-blob storage keyed by string id.
 
 ``TensorKVStore`` is an OPTIONAL capability layered on top: backends that can
@@ -10,7 +12,9 @@ non-breaking; existing ``put(bytes)`` / ``get`` callers are untouched.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable
+from dataclasses import dataclass
+from enum import Enum
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:  # keep this module torch-free at runtime (lazy-import constraint)
     import torch
@@ -32,13 +36,38 @@ class KVStore(Protocol):
       ``isinstance(obj, KVStore)`` — no inheritance required.
     """
 
-    def put(self, key: str, value: bytes) -> None: ...
+    def put(self, key: str, value: bytes) -> None:
+        """Store a blob under ``key``, overwriting any existing value.
 
-    def get(self, key: str) -> Optional[bytes]: ...
+        Args:
+            key: Storage id. Reused keys are overwritten last-write-wins.
+            value: Opaque payload; the store does not interpret it.
+        """
+        ...
 
-    def remove(self, key: str) -> None: ...
+    def get(self, key: str) -> bytes | None:
+        """Fetch the blob stored under ``key``.
 
-    def list_keys(self) -> list[str]: ...
+        Returns:
+            The stored bytes, or None on a miss (so a miss degrades to recompute
+            rather than raising).
+        """
+        ...
+
+    def remove(self, key: str) -> None:
+        """Delete the blob under ``key``.
+
+        Removing an absent key is a no-op (idempotent), not an error.
+        """
+        ...
+
+    def list_keys(self) -> list[str]:
+        """Return all keys currently present in the store.
+
+        Returns:
+            A snapshot of the live keys; ordering is unspecified.
+        """
+        ...
 
 
 @runtime_checkable
@@ -60,23 +89,46 @@ class TensorKVStore(Protocol):
       buffer/holder it was read from).
     """
 
-    def put_tensor(self, key: str, tensor: "torch.Tensor") -> None: ...
+    def put_tensor(self, key: str, tensor: torch.Tensor) -> None:
+        """Store a tensor under ``key`` without serializing to bytes.
+
+        The backend copies the contents (e.g. to host memory or a shared-memory
+        buffer); the caller's tensor is left untouched and stays safe to mutate.
+
+        Args:
+            key: Storage id; reused keys are overwritten.
+            tensor: The tensor to persist.
+        """
+        ...
 
     def get_tensor(
         self,
         key: str,
         *,
         shape: tuple[int, ...],
-        dtype: "torch.dtype",
-        device: "str | torch.device | None" = None,
-    ) -> "Optional[torch.Tensor]": ...
+        dtype: torch.dtype,
+        device: str | torch.device | None = None,
+    ) -> torch.Tensor | None:
+        """Read back the tensor stored under ``key``.
+
+        ``shape`` and ``dtype`` are required because the stored buffer is raw and
+        not self-describing; they are used to reconstruct the view (the fallback
+        path needs them; a native backend may validate against or ignore them).
+
+        Args:
+            key: Storage id used at ``put_tensor`` time.
+            shape: Logical shape to reconstruct.
+            dtype: Element dtype to reinterpret the buffer as.
+            device: Optional target device; None leaves placement to the backend.
+
+        Returns:
+            A caller-owned tensor (cloned so it outlives any backend buffer), or
+            None on a cache miss.
+        """
+        ...
 
 
 # ------------------------------------------------------------- storage data types
-from dataclasses import dataclass
-from enum import Enum
-
-
 class Tier(Enum):
     """Hot to cold. Blobs demote one tier at a time rather than being dropped."""
     HBM_STAGING = "hbm_staging"   # transient materialization only; bounded staging

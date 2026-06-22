@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
+"""Local filesystem KVStore: opaque byte blobs stored as files (single machine)."""
+
 from __future__ import annotations
 
 import hashlib
@@ -5,7 +9,6 @@ import json
 import os
 import threading
 from pathlib import Path
-from typing import Dict, Optional
 
 from loguru import logger
 
@@ -24,9 +27,11 @@ class LocalFileKVStore:
         self.root_dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self.root_dir / "kv_index.json"
         self._lock = threading.RLock()
-        self._index: Dict[str, str] = self._load_index()
+        self._index: dict[str, str] = self._load_index()
 
     def put(self, key: str, value: bytes) -> None:
+        """Write ``value`` to the key's file via a temp-then-atomic-rename, then
+        persist the index. The on-disk file is only ever observed fully written."""
         with self._lock:
             filename = self._index.get(key)
             if not filename:
@@ -38,7 +43,9 @@ class LocalFileKVStore:
             os.replace(tmp_path, file_path)
             self._save_index()
 
-    def get(self, key: str) -> Optional[bytes]:
+    def get(self, key: str) -> bytes | None:
+        """Read the key's file, or None on a miss. A concurrent ``remove`` that
+        unlinks the file after the index lookup is treated as a miss."""
         with self._lock:
             filename = self._index.get(key)
             if not filename:
@@ -55,6 +62,8 @@ class LocalFileKVStore:
             return None
 
     def remove(self, key: str) -> None:
+        """Drop the key from the index and unlink its file; a missing key is a
+        no-op."""
         with self._lock:
             filename = self._index.pop(key, None)
             if filename:
@@ -64,14 +73,26 @@ class LocalFileKVStore:
                 self._save_index()
 
     def list_keys(self) -> list[str]:
+        """Return the logical keys in the index (not the on-disk filenames)."""
         with self._lock:
             return list(self._index.keys())
 
     def _hash_key(self, key: str) -> str:
+        """Derive a stable on-disk filename for a key (SHA-256 hex + ``.bin``)."""
         digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
         return f"{digest}.bin"
 
-    def _load_index(self) -> Dict[str, str]:
+    def _load_index(self) -> dict[str, str]:
+        """Load and validate the key->filename index from disk.
+
+        Returns:
+            The index mapping, or an empty dict if no index file exists.
+
+        Raises:
+            RuntimeError: The index file exists but cannot be read.
+            ValueError: The index is not valid JSON, is not a JSON object, or
+                contains a non-string key or value.
+        """
         if not self._index_path.exists():
             return {}
         try:
@@ -109,6 +130,8 @@ class LocalFileKVStore:
         return data
 
     def _save_index(self) -> None:
+        """Persist the index via a temp-then-atomic-rename so the on-disk index is
+        never observed half-written."""
         tmp = self._index_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(self._index, ensure_ascii=True))
         os.replace(tmp, self._index_path)

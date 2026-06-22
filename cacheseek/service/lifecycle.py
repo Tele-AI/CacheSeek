@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """CacheService — lifecycle orchestrator.
 
 Lifecycle:
@@ -24,7 +26,7 @@ import threading
 import time
 from pathlib import Path
 from queue import Empty, Full, Queue
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -62,8 +64,8 @@ class CacheService:
 
     def __init__(
         self,
-        strategies: "list[Strategy]",
-        eviction_policy: Optional[EvictionPolicy] = None,
+        strategies: list[Strategy],
+        eviction_policy: EvictionPolicy | None = None,
         *,
         async_save: bool = True,
         max_queue_size: int = 8,
@@ -94,8 +96,8 @@ class CacheService:
         self._vector_update_idle = threading.Event()
         self._vector_update_idle.set()  # idle initially
 
-        self._save_queue: Optional[Queue] = None
-        self._save_worker: Optional[threading.Thread] = None
+        self._save_queue: Queue | None = None
+        self._save_worker: threading.Thread | None = None
         self._stop_event = threading.Event()
         if async_save:
             self._save_queue = Queue(maxsize=max_queue_size)
@@ -107,7 +109,7 @@ class CacheService:
             self._save_worker.start()
 
     @classmethod
-    def from_config(cls, config_path: "str | Path") -> "CacheService":
+    def from_config(cls, config_path: str | Path) -> CacheService:
         """Bootstrap a ``CacheService`` from a YAML config file.
 
         The YAML keys map 1:1 to fields on
@@ -134,9 +136,9 @@ class CacheService:
             ) from exc
 
         from cacheseek.backends.metadata.local import LocalCacheMetadataManager
+        from cacheseek.reuse.approximate.strategy import VideoBasedApproximateCache
         from cacheseek.service.config import CacheConfig, CacheMode
         from cacheseek.service.connection import ConnectionManager
-        from cacheseek.reuse.approximate.strategy import VideoBasedApproximateCache
 
         cfg_path = Path(config_path)
         if not cfg_path.is_file():
@@ -373,7 +375,7 @@ class CacheService:
         )
 
     async def _safe_strategy_save(
-        self, strat: "Strategy", query: CacheQuery, outputs: ModelOutputs
+        self, strat: Strategy, query: CacheQuery, outputs: ModelOutputs
     ) -> None:
         """Wrap ``strat.save`` with exception logging — never crash the worker."""
         try:
@@ -402,10 +404,10 @@ class CacheService:
 
     def _run_save_inline(
         self,
-        strat: "Strategy",
+        strat: Strategy,
         query: CacheQuery,
         outputs: ModelOutputs,
-        _loop: Optional[asyncio.AbstractEventLoop] = None,
+        _loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         """Run one save inline.
 

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """EvictionPolicy Protocol + LRUEviction default.
 
 Eviction decisions live at the metadata layer (``MetadataStore`` provides
@@ -14,8 +16,8 @@ roadmap item.
 """
 from __future__ import annotations
 
-from typing import Any, Protocol, Sequence, runtime_checkable
-
+from collections.abc import Sequence
+from typing import Any, Protocol, runtime_checkable
 
 _Candidates = Sequence[tuple[str, dict[str, Any]]]
 

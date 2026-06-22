@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """CacheService lifecycle tests — async save dispatch, vector-update
 barrier, shutdown ordering, cache_mode short-circuits.
 
@@ -18,7 +20,6 @@ from cacheseek.service.lifecycle import CacheService
 from cacheseek.service.outputs import ModelOutputs
 from cacheseek.service.query import CacheQuery
 from cacheseek.service.result import LookupResult
-
 
 pytestmark = pytest.mark.smoke
 

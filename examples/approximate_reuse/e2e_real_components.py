@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
+# ruff: noqa: E402  (imports intentionally follow the sys.path/editable-finder shim)
 """approximate-reuse real-component e2e: real Qwen embedding(+reranker) + FAISS + optional Fluxon.
 
 No dependency on a video-generation model -- save is fed a synthetic latent plus a frame
@@ -38,11 +41,13 @@ if _ROOTS:
     for _r in reversed(_ROOTS):
         sys.path.insert(0, _r)
 
+import inspect
+
 import torch
 from PIL import Image
 
 import cacheseek
-import inspect
+
 if _ROOTS:
     _src = inspect.getsourcefile(cacheseek) or ""
     assert any(_src.startswith(r) for r in _ROOTS), f"cacheseek resolved to {_src}"

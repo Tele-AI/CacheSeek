@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """KEY materialization and geometry for LingBot-World-Fast.
 
 Backbone = Wan2.1-14B (MHA), standard geometry: n_layers=40, num_heads=40,
@@ -22,10 +24,19 @@ SPATIAL_DOWNSAMPLE = 16        # vae_stride[1,2]=8 x patch_size[1,2]=2
 
 
 def frame_seqlen(height: int, width: int) -> int:
+    """Tokens per latent frame at pixel resolution (height, width).
+
+    Each spatial dim is reduced by SPATIAL_DOWNSAMPLE (VAE stride 8 x patch 2 = 16).
+    """
     return (height // SPATIAL_DOWNSAMPLE) * (width // SPATIAL_DOWNSAMPLE)
 
 
 def lingbot_geometry(height: int, width: int, num_frame_per_chunk: int = 3) -> ModelGeometry:
+    """Build the Wan2.1-14B ModelGeometry for the given resolution and chunk size.
+
+    Uses the fixed backbone constants (40 layers, 40 KV heads, head_dim 128) and
+    derives chunk_tokens from num_frame_per_chunk x frame_seqlen(height, width).
+    """
     return ModelGeometry(
         n_layers=WAN_14B_N_LAYERS,
         n_kv_heads=WAN_14B_N_KV_HEADS,
@@ -73,6 +84,11 @@ CONFIG_BLOB_KEYS = (
 
 
 def config_blob_fields(engine_config: dict) -> dict:
+    """Project an engine config down to the CONFIG_BLOB_KEYS that affect computation.
+
+    Only these fields feed config_blob_hash; omitting one risks reusing KV from a
+    different schedule/resolution/quant and returning an incorrect hit.
+    """
     return {k: engine_config[k] for k in CONFIG_BLOB_KEYS if k in engine_config}
 
 

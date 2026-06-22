@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """TeleFuserCacheAdapter — FrameworkAdapter Protocol impl for TeleFuser.
 
 Framework-side lifecycle hooks:

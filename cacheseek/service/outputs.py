@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """ModelOutputs — response-side input to CacheService.save().
 
 Built by FrameworkAdapter.on_response(request, raw_outputs) from framework-
@@ -6,7 +8,7 @@ specific output types, normalized into a strategy-agnostic shape.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -29,7 +31,7 @@ class ModelOutputs:
     """
 
     latent_states_dict: dict[int, Any] = field(default_factory=dict)
-    embedding_video_frames: Optional[list[Any]] = None
+    embedding_video_frames: list[Any] | None = None
     num_frames: int = 0
     final_step: int = 0
     saved_steps: list[int] = field(default_factory=list)

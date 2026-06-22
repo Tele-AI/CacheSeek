@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """CacheQuery — request-side input to CacheService.lookup().
 
 Built by FrameworkAdapter.build_query(request) from the framework-specific
@@ -6,7 +8,8 @@ request type, normalized into a strategy-agnostic shape.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any
+
 
 @dataclass(frozen=True)
 class CacheQuery:
@@ -28,8 +31,8 @@ class CacheQuery:
     """
 
     prompt: str
-    seed: Optional[int] = None
+    seed: int | None = None
     task_type: str = "t2v"
-    model_profile: Optional[Any] = None
+    model_profile: Any | None = None
     hint_spec: dict[str, Any] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)

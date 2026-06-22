@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """cacheseek — cross-request KV-cache middleware for world-model long-horizon reasoning.
 
 Top-level API re-exports (lazy):

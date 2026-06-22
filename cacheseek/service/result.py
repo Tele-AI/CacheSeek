@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """LookupResult + ResumeHint sealed union.
 
 Sealed dataclass union pattern (emulating a Java/Kotlin/Rust enum in Python):
@@ -12,7 +14,7 @@ lifecycles.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Union
 
 if TYPE_CHECKING:
     from cacheseek.service.payload import Payload
@@ -56,7 +58,7 @@ class LoadStateSnapshot(ResumeHint):
     """
 
     state_id: str
-    rollout_horizon: Optional[int] = None
+    rollout_horizon: int | None = None
 
 
 @dataclass(frozen=True)
@@ -79,8 +81,8 @@ class ResumeKVChain(ResumeHint):
     chain_id: str
     matched_groups: int
     last_global_end_index: int
-    cross_attn_group_id: Optional[str] = None
-    plucker_block_ids: Optional[tuple[str, ...]] = None
+    cross_attn_group_id: str | None = None
+    plucker_block_ids: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -124,7 +126,7 @@ class NoOp(ResumeHint):
 
 
 # Public union type for type-checking exhaustive dispatch (with assert_never).
-ResumeHintT = Union[
+ResumeHintT = Union[  # noqa: UP007  (explicit Union for this exported runtime alias)
     SkipStep,
     FastForward,
     LoadStateSnapshot,
@@ -171,29 +173,29 @@ class LookupResult:
     """
 
     hit: bool
-    payload: Optional["Payload"] = None
-    resume_hint: Optional[ResumeHint] = None
-    matched_cache_id: Optional[str] = None
-    matched_score: Optional[float] = None
-    matched_similarity: Optional[float] = None
-    cached_prompt: Optional[str] = None
-    miss_reason: Optional[str] = None
+    payload: Payload | None = None
+    resume_hint: ResumeHint | None = None
+    matched_cache_id: str | None = None
+    matched_score: float | None = None
+    matched_similarity: float | None = None
+    cached_prompt: str | None = None
+    miss_reason: str | None = None
 
     @classmethod
-    def miss(cls, reason: str = "") -> "LookupResult":
+    def miss(cls, reason: str = "") -> LookupResult:
         """Construct a cache-miss result, optionally tagging the reason."""
         return cls(hit=False, miss_reason=reason or None)
 
     @classmethod
     def hit_skip_step(
         cls,
-        payload: "Payload",
+        payload: Payload,
         k: int,
         cache_id: str,
         score: float,
         similarity: float,
         cached_prompt: str = "",
-    ) -> "LookupResult":
+    ) -> LookupResult:
         """Construct a hit result with SkipStep instruction (the alpha path)."""
         return cls(
             hit=True,
@@ -206,6 +208,6 @@ class LookupResult:
         )
 
     @classmethod
-    def hit_fast_forward(cls, k: int, node: Any = None, namespace: Any = None) -> "LookupResult":
+    def hit_fast_forward(cls, k: int, node: Any = None, namespace: Any = None) -> LookupResult:
         """Construct a hit result with FastForward instruction (exact-prefix path)."""
         return cls(hit=True, resume_hint=FastForward(k=k, node=node, namespace=namespace))

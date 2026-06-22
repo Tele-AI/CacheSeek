@@ -1,25 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
+"""VideoBasedApproximateCache — the embedding-retrieval reuse strategy for video diffusion."""
+
 from __future__ import annotations
 
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import torch
 from loguru import logger
 
-from cacheseek.service.cache_types import VectorSearchResult
-from cacheseek.service.config import CacheConfig
 from cacheseek.reuse.approximate.payload import (
     VideoApproxPartialSpec,
     VideoApproxPayload,
 )
+from cacheseek.service.cache_types import VectorSearchResult
+from cacheseek.service.config import CacheConfig
 from cacheseek.service.interfaces.encoder import PromptEncoder, VideoEncoder
-from cacheseek.stores.base import KVStore
 from cacheseek.service.interfaces.metadata_store import MetadataStore
 from cacheseek.service.interfaces.vector_store import VectorStore
 from cacheseek.service.outputs import ModelOutputs
 from cacheseek.service.query import CacheQuery
 from cacheseek.service.result import LookupResult
+from cacheseek.stores.base import KVStore
 
 
 class BaseCacheStrategy(ABC):
@@ -49,7 +53,7 @@ class BaseCacheStrategy(ABC):
         """Strategy Protocol: query + outputs in, no return."""
         pass
 
-    def _audit_emit(self, event_type: str, payload: Dict[str, Any]) -> None:
+    def _audit_emit(self, event_type: str, payload: dict[str, Any]) -> None:
         """Best-effort: forward event to attached ``AuditLog``.
 
         ``cache_factory`` injects an ``AuditLog`` impl as
@@ -125,7 +129,7 @@ class BaseCacheStrategy(ABC):
 
     def _load_payload(
         self, cache_id: str, partial_spec: VideoApproxPartialSpec
-    ) -> Optional[VideoApproxPayload]:
+    ) -> VideoApproxPayload | None:
         """Load a VideoApproxPayload covering the requested steps.
 
         Returns ``None`` when no requested step is present in the KV
@@ -168,7 +172,7 @@ class BaseCacheStrategy(ABC):
     def _normalize_cache_id(self, cache_id: str) -> str:
         return (cache_id or "").replace("-", "")
 
-    def _normalize_search_results(self, results: List[VectorSearchResult]) -> None:
+    def _normalize_search_results(self, results: list[VectorSearchResult]) -> None:
         for r in results:
             r.cache_id = self._normalize_cache_id(r.cache_id)
 
@@ -180,16 +184,35 @@ class BaseCacheStrategy(ABC):
 
 
 class VideoBasedApproximateCache(BaseCacheStrategy):
+    """Approximate cache for video diffusion that reuses early-denoise latents.
+
+    On ``save`` it embeds the generated video (and prompt) into the vector
+    store keyed by ``cache_id`` and persists the donor's early-step latents in
+    the KV store. On ``lookup`` it embeds the request prompt, retrieves the
+    nearest donor(s), optionally reranks them (false-hit gate), and on a hit
+    returns the latents to resume from, skipping the matched donor's already-
+    computed denoise steps. The number of skipped steps is staircase-gated by
+    the rerank score (see ``_determine_skip_step``).
+
+    Implements the ``Strategy`` Protocol (see ``service/interfaces/strategy.py``
+    for the full contract). Encoders and the reranker are injected; ``lookup``
+    and ``save`` degrade gracefully to a miss / no-op when a required backend
+    (vector store or encoder) is unavailable; if only the reranker is missing,
+    lookup falls back to vector-similarity scoring and can still hit. Saves are
+    all-or-nothing:
+    a partial failure rolls back KV, vector, and metadata writes.
+    """
+
     def __init__(
         self,
         config,
         kv_store: KVStore,
-        vector_store: Optional[VectorStore],
+        vector_store: VectorStore | None,
         metadata_manager: MetadataStore,
         *,
-        prompt_encoder: Optional[PromptEncoder] = None,
-        video_encoder: Optional["VideoEncoder"] = None,
-        reranker: Optional[object] = None,
+        prompt_encoder: PromptEncoder | None = None,
+        video_encoder: VideoEncoder | None = None,
+        reranker: object | None = None,
     ):
         super().__init__(config, kv_store, metadata_manager)
         self.vector_store = vector_store
@@ -205,6 +228,16 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
     async def lookup(
         self, query: CacheQuery, ctx: Any = None
     ) -> LookupResult:
+        """Resolve a prompt-similarity hit into resume latents (Strategy impl).
+
+        Embeds the prompt, vector-searches the video collection, optionally
+        reranks (false-hit gate), applies the similarity / rerank thresholds,
+        and on a hit loads the donor latents and returns a skip-step resume
+        hint. Returns a miss when any required backend is unavailable, no
+        candidate clears the threshold, the resolved skip-step is 0, or the
+        matched KV entry is missing (which also triggers lazy eviction of the
+        stale vector entry). See the Strategy Protocol for the full contract.
+        """
         prompt = query.prompt or ""
         task_type = query.task_type or "t2v"
         logger.debug(f"VideoBasedApproximateCache.lookup start task_type={task_type} prompt_len={len(prompt)}")
@@ -463,6 +496,17 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
         outputs: ModelOutputs,
         ctx: Any = None,
     ) -> None:
+        """Persist this request as a reusable donor entry (Strategy impl).
+
+        Writes the valid early-step latents to the KV store, embeds the
+        generated video into the vector collection, and registers metadata —
+        all keyed by a freshly generated ``cache_id``. Silently no-ops when
+        there is nothing worth caching (empty prompt, no latents/steps) or a
+        required backend (vector store, video frames, video encoder) is
+        unavailable, cleaning up any latents already written. Any backend
+        failure mid-write rolls back KV / vector / metadata and re-raises as
+        ``RuntimeError``. See the Strategy Protocol for the full contract.
+        """
         prompt = query.prompt or ""
         task_type = query.task_type or "t2v"
         latent_states_dict = outputs.latent_states_dict
@@ -484,7 +528,7 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
         requested_steps = sorted(set(int(s) for s in saved_steps))
         # Filter out None latents — pipeline may report a step in
         # ``saved_steps`` even if the snapshot didn't actually land.
-        valid_latents: Dict[int, torch.Tensor] = {
+        valid_latents: dict[int, torch.Tensor] = {
             step: latent_states_dict[step]
             for step in requested_steps
             if latent_states_dict.get(step) is not None
@@ -498,7 +542,7 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
             step_to_latents=dict(valid_latents),
         )
 
-        saved_steps: List[int] = []
+        saved_steps: list[int] = []
         collection = getattr(self.config, "video_vector_collection", "video")
         vector_written = False
         metadata_attempted = False
@@ -676,8 +720,8 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
             reason,
         )
 
-    def _remove_saved_latents(self, cache_id: str, saved_steps: List[int]) -> None:
-        errors: List[str] = []
+    def _remove_saved_latents(self, cache_id: str, saved_steps: list[int]) -> None:
+        errors: list[str] = []
         for step in saved_steps:
             try:
                 self.kv_store.remove(f"{cache_id}_step{int(step)}")
@@ -697,12 +741,12 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
     def _rollback_cache_entry(
         self,
         cache_id: str,
-        saved_steps: List[int],
+        saved_steps: list[int],
         collection: str,
         remove_vector: bool,
         remove_metadata: bool,
     ) -> None:
-        errors: List[str] = []
+        errors: list[str] = []
         if remove_vector and self.vector_store is not None:
             try:
                 self.vector_store.delete(collection, [cache_id])
@@ -735,7 +779,12 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
         if errors:
             raise RuntimeError(f"VideoBasedApproximateCache rollback failed cache_id={cache_id}: {'; '.join(errors)}")
 
-    def _vector_search(self, query_vec: List[float], top_k: int = 1) -> List[VectorSearchResult]:
+    def _vector_search(self, query_vec: list[float], top_k: int = 1) -> list[VectorSearchResult]:
+        """Search the video collection, sorted by descending similarity.
+
+        Returns an empty list when no vector store is attached or the search
+        yields nothing; ``top_k`` is clamped to at least 1.
+        """
         if self.vector_store is None:
             return []
         collection = getattr(self.config, "video_vector_collection", "video")
@@ -749,13 +798,13 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
     def _load_frames_for_embedding(
         self,
         *,
-        embedding_video_frames: Optional[List[Any]],
-    ) -> List[Any]:
+        embedding_video_frames: list[Any] | None,
+    ) -> list[Any]:
         if embedding_video_frames:
             return list(embedding_video_frames)
         return []
 
-    def _sample_indices(self, total: int, max_frames: int) -> List[int]:
+    def _sample_indices(self, total: int, max_frames: int) -> list[int]:
         if total <= 0:
             return []
         max_frames = max(1, int(max_frames or 1))
@@ -764,7 +813,7 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
         step = float(total) / float(max_frames)
         return [min(int(i * step), total - 1) for i in range(max_frames)]
 
-    def _select_k_by_score(self, rerank_score: float) -> Optional[int]:
+    def _select_k_by_score(self, rerank_score: float) -> int | None:
         """Staircase upper bound on skip-step K given a rerank score.
 
         Implements the online rule ``K*(s) = max{K : τ_K ≤ s}``: each tier K
@@ -786,7 +835,7 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
         return max(qualifying) if qualifying else None
 
     def _determine_skip_step(
-        self, saved_steps: List[int], rerank_score: Optional[float] = None
+        self, saved_steps: list[int], rerank_score: float | None = None
     ) -> int:
         """Resolve *which snapshotted step to resume from* for a hit.
 
@@ -818,12 +867,12 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
 
     def _build_rerank_documents(
         self,
-        results: List[VectorSearchResult],
-    ) -> List[Dict[str, object]]:
-        documents: List[Dict[str, object]] = []
+        results: list[VectorSearchResult],
+    ) -> list[dict[str, object]]:
+        documents: list[dict[str, object]] = []
         for item in results:
             text = self._candidate_text(item)
-            doc: Dict[str, object] = {}
+            doc: dict[str, object] = {}
             if text:
                 doc["text"] = text
             documents.append(doc)
@@ -832,9 +881,21 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
     def _rerank_scores(
         self,
         query: str,
-        results: List[VectorSearchResult],
+        results: list[VectorSearchResult],
         source: str,
-    ) -> Optional[List[float]]:
+    ) -> list[float] | None:
+        """Score candidates with the text reranker, aligned with ``results``.
+
+        Returns ``None`` (caller falls back to vector similarity) when the
+        reranker is missing, lacks ``score_mm``, or no candidate has text to
+        rerank. On success returns one float per candidate, in ``results``
+        order.
+
+        Raises:
+            RuntimeError: The reranker call failed or score formatting failed.
+            ValueError: The reranker returned an empty score list, or a score
+                count that does not match the number of candidates.
+        """
         reranker = getattr(self, "reranker", None)
         if reranker is None:
             logger.warning(f"{source} rerank skip: reranker unavailable")
@@ -879,14 +940,16 @@ class VideoBasedApproximateCache(BaseCacheStrategy):
         return [float(value) for value in scores]
 
 
-_STRATEGY_REGISTRY: Dict[str, type] = {}
+_STRATEGY_REGISTRY: dict[str, type] = {}
 
 
 def register_strategy(name: str, cls: type) -> None:
+    """Register a strategy class under ``name`` (overwrites any existing)."""
     _STRATEGY_REGISTRY[name] = cls
 
 
-def get_strategy_class(name: str) -> Optional[type]:
+def get_strategy_class(name: str) -> type | None:
+    """Return the strategy class registered under ``name``, or ``None``."""
     return _STRATEGY_REGISTRY.get(name)
 
 

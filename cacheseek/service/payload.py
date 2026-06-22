@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Payload Protocol — byte-stream container for a strategy's cache content.
 
 Per-strategy schema; KV/Vector backends never look inside.
@@ -21,8 +23,9 @@ Concrete impl example: ``cacheseek.reuse.approximate.payload.VideoApproxPayload`
 """
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Callable, Iterator, Optional, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -84,9 +87,9 @@ class Payload(Protocol):
     def from_kv_loader(
         cls,
         cache_id: str,
-        kv_loader: Callable[[str], Optional[bytes]],
-        partial_spec: Optional[PartialLoadSpec] = None,
-    ) -> "Payload":
+        kv_loader: Callable[[str], bytes | None],
+        partial_spec: PartialLoadSpec | None = None,
+    ) -> Payload:
         """Reconstruct a Payload by reading KV entries via the kv_loader callback.
 
         partial_spec=None → load full payload (default).

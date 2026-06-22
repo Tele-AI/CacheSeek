@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """cacheseek.service.cache_types — strategy-internal helper types.
 
 - ``VectorSearchResult``: returned by ``Strategy._vector_search`` to
@@ -8,7 +10,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 
 @dataclass
@@ -17,7 +19,7 @@ class IndexEntry:
 
     cache_id: str
     prompt: str
-    saved_steps: List[int]
+    saved_steps: list[int]
     cache_type: str = "approximate_cache"
 
 
@@ -28,5 +30,5 @@ class VectorSearchResult:
     cache_id: str
     similarity: float
     prompt: str
-    saved_steps: List[int]
-    payload: Dict[str, Any]
+    saved_steps: list[int]
+    payload: dict[str, Any]

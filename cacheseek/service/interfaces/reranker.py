@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Reranker Protocol — second-stage scoring of vector-search candidates."""
 
 from __future__ import annotations

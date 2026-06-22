@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """FrameworkAdapter Protocol — bridge inference framework hooks to cacheseek types."""
 
 from __future__ import annotations
@@ -27,11 +29,27 @@ class FrameworkAdapter(Protocol):
       from concurrent inference workers.
     """
 
-    def build_query(self, request: Any) -> "CacheQuery": ...  # noqa: F821
+    def build_query(self, request: Any) -> CacheQuery:  # noqa: F821
+        """Translate a framework-native request into a neutral CacheQuery.
+
+        Extracts the cache-relevant signals (prompt, seed, task type, model
+        profile, etc.) from the framework's own request object and normalizes
+        them into the strategy-agnostic CacheQuery that
+        ``CacheService.lookup`` consumes. Pure conversion: no engine state is
+        read or mutated.
+
+        Args:
+            request: The framework-specific request object (e.g. a TeleFuser
+                ``TaskRequest``).
+
+        Returns:
+            A CacheQuery built from ``request``.
+        """
+        ...
 
     def apply_resume(
         self,
-        result: "LookupResult",  # noqa: F821
+        result: LookupResult,  # noqa: F821
         engine_ctx: Any,
     ) -> dict[str, Any]:
         """Translate ``LookupResult`` into a framework-shaped dict.
@@ -44,4 +62,19 @@ class FrameworkAdapter(Protocol):
         """
         ...
 
-    def on_response(self, request: Any, outputs: Any) -> "ModelOutputs": ...  # noqa: F821
+    def on_response(self, request: Any, outputs: Any) -> ModelOutputs:  # noqa: F821
+        """Translate a framework-native response into neutral ModelOutputs.
+
+        Extracts the cacheable artifacts (step-snapshot latents, frames, step
+        counts, etc.) from the framework's raw output and normalizes them into
+        the ModelOutputs that ``CacheService.save`` persists. Pure conversion.
+
+        Args:
+            request: The originating framework-specific request, available for
+                fields the response alone does not carry.
+            outputs: The framework-specific raw output object.
+
+        Returns:
+            A ModelOutputs built from ``request`` and ``outputs``.
+        """
+        ...

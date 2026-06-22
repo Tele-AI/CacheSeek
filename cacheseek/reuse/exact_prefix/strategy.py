@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """ExactPrefixStrategy — exact_prefix semantics under the shared Strategy protocol.
 
 Conforms to the existing ``Strategy`` protocol (service/interfaces/strategy.py,
@@ -31,9 +33,19 @@ class ExactPrefixStrategy:
     conformance, no inheritance)."""
 
     def __init__(self, manager: WorldKVManager) -> None:
+        """Bind to the WorldKVManager that owns the trie forest and store."""
         self.mgr = manager
 
     async def lookup(self, query: CacheQuery, ctx: Any = None) -> LookupResult:
+        """Map a trie prefix search to a FastForward hit, gated by break_even_k.
+
+        Reads ``query.extra["root_hash"]`` and ``query.extra["actions"]``,
+        descends the namespace trie for the longest exact prefix, and returns a
+        FastForward hit only when the matched length reaches break_even_k. Pure
+        search plus the break-even gate: it never materializes KV (that is the
+        engine adapter's job). Returns a tagged miss for missing query fields,
+        namespace miss, no match, or a below-threshold match.
+        """
         root = query.extra.get("root_hash")
         actions = query.extra.get("actions")
         if root is None or actions is None:
@@ -48,6 +60,17 @@ class ExactPrefixStrategy:
         return LookupResult.hit_fast_forward(k=m.matched_len, node=m.node, namespace=m.namespace)
 
     async def save(self, query: CacheQuery, outputs: Any = None, ctx: Any = None) -> None:
+        """Ingest one finalized chunk into the trie (chunk-granular streaming writeback).
+
+        Unlike request-level save, exact_prefix writes per chunk: the chunk's KV
+        payload, latent, and mount point are passed via ``ctx`` (keys ns, parent,
+        action, node_key, depth, payload, latent, optional nbytes); ``outputs`` is
+        unused. The newly created trie node is written back to ``ctx["node"]`` so
+        the caller can advance its cursor.
+
+        Raises:
+            AssertionError: if ctx is not a dict carrying the chunk fields.
+        """
         assert isinstance(ctx, dict) and "ns" in ctx, "exact_prefix save requires chunk ctx"
         node = self.mgr.ingest(
             ctx["ns"], ctx["parent"], ctx["action"], ctx["node_key"], ctx["depth"],

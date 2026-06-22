@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """reuse — the reuse-semantics layer: two coexisting hit semantics over the
 same cache concept.
 

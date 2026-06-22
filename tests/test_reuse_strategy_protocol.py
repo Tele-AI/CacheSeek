@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Conformance tests: both reuse semantics share one Strategy protocol.
 
 - Structural conformance: ExactPrefixStrategy and VideoBasedApproximateCache

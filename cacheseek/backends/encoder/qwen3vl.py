@@ -1,9 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
+"""Qwen3-VL embedding + reranker backend (PromptEncoder / VideoEncoder / Reranker impls)."""
+
 from __future__ import annotations
 
 import importlib
 import inspect
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -30,10 +34,10 @@ _QWEN3_VL_RERANKER_MODULES = [
 
 
 def _try_import_symbol(
-    module_candidates: List[str],
+    module_candidates: list[str],
     symbol_name: str,
     label: str,
-) -> Optional[Any]:
+) -> Any | None:
     import_failures: list[str] = []
     for module_path in module_candidates:
         try:
@@ -90,7 +94,7 @@ def _process_inputs(processor: object, inputs: object) -> object:
     raise TypeError(f"processor is neither callable nor provides process() processor_type={processor_type}")
 
 
-def _extract_first_vector(vectors: Any) -> List[float]:
+def _extract_first_vector(vectors: Any) -> list[float]:
     if vectors is None:
         return []
     if isinstance(vectors, list):
@@ -118,16 +122,32 @@ def _extract_first_vector(vectors: Any) -> List[float]:
 
 
 class Qwen3VLEncoder:
+    """Qwen3-VL embedding encoder for text and video.
+
+    Fulfils both the ``PromptEncoder`` (``encode``) and ``VideoEncoder``
+    (``encode_video``) Protocols, producing L2-normalized embeddings that
+    downstream VectorStores treat as cosine-comparable. The heavyweight
+    ``Qwen3VLEmbedder`` is imported lazily from the vendored ``models_src`` tree
+    and constructed once on first use (or earlier when no embedder is injected);
+    an injected ``embedder`` bypasses the import path entirely. A failed load is
+    cached so subsequent calls re-raise the same error instead of retrying.
+
+    Constructor args (``model_path``, ``torch_dtype``, ``attn_implementation``,
+    ``device_id``, ``fps``, ``max_frames``) are forwarded to the backing model
+    only when its ``__init__`` actually declares them, keeping the encoder
+    tolerant of differing embedder versions.
+    """
+
     def __init__(
         self,
         model_path: str = "Qwen/Qwen3-VL-Embedding-2B",
         instruction: str = "Represent the user's input",
         max_frames: int = 16,
         fps: float = 1.0,
-        torch_dtype: Optional[str] = None,
-        attn_implementation: Optional[str] = None,
-        device_id: Optional[int] = None,
-        embedder: Optional[object] = None,
+        torch_dtype: str | None = None,
+        attn_implementation: str | None = None,
+        device_id: int | None = None,
+        embedder: object | None = None,
     ) -> None:
         self.model_path = model_path
         self.instruction = instruction
@@ -137,22 +157,33 @@ class Qwen3VLEncoder:
         self.attn_implementation = attn_implementation
         self.device_id = device_id
         self._embedder = embedder
-        self._embedder_init_error: Optional[BaseException] = None
+        self._embedder_init_error: BaseException | None = None
         self._embedder_init_attempted = embedder is not None
         if self._embedder is None:
             self._get_embedder()
 
-    def encode(self, prompt: str) -> List[float]:
+    def encode(self, prompt: str) -> list[float]:
+        """Encode a text prompt into an embedding vector.
+
+        Empty/None prompts are encoded as the empty string. A failed embedder
+        load raises (the load error is cached and re-raised); it does not return [].
+        """
         return self._encode_inputs([{"text": prompt or "", "instruction": self.instruction}])
 
     def encode_video(
         self,
-        frames: List["Image.Image"],
-        prompt: Optional[str] = None,
-    ) -> List[float]:
+        frames: list[Image.Image],
+        prompt: str | None = None,
+    ) -> list[float]:
+        """Encode a sequence of video frames into a single embedding vector.
+
+        ``prompt`` is passed as an optional text hint alongside the frames.
+        Returns an empty list when ``frames`` is empty; a failed embedder load
+        raises (cached and re-raised) rather than returning [].
+        """
         if not frames:
             return []
-        item: Dict[str, object] = {
+        item: dict[str, object] = {
             "video": frames,
             "instruction": self.instruction,
         }
@@ -160,16 +191,21 @@ class Qwen3VLEncoder:
             item["text"] = prompt or ""
         return self._encode_inputs([item])
 
-    def decompose_prompt(self, prompt: str) -> Dict[str, str]:
+    def decompose_prompt(self, prompt: str) -> dict[str, str]:
+        """Split a prompt into named sub-prompts; this encoder does not decompose.
+
+        Returns the prompt unchanged under a single ``"whole"`` key. Provided so
+        callers can treat decomposing and non-decomposing encoders uniformly.
+        """
         return {"whole": prompt or ""}
 
-    def _encode_inputs(self, inputs: List[Dict[str, object]]) -> List[float]:
+    def _encode_inputs(self, inputs: list[dict[str, object]]) -> list[float]:
         embedder = self._get_embedder()
         if embedder is None:
             return []
         return _extract_first_vector(_process_inputs(embedder, inputs))
 
-    def _get_embedder(self) -> Optional[object]:
+    def _get_embedder(self) -> object | None:
         if self._embedder is not None:
             return self._embedder
         if self._embedder_init_error is not None:
@@ -193,7 +229,7 @@ class Qwen3VLEncoder:
             )
             raise self._embedder_init_error
 
-        init_kwargs: Dict[str, object] = {
+        init_kwargs: dict[str, object] = {
             "model_name_or_path": self.model_path,
             "fps": self.fps,
             "max_frames": self.max_frames,
@@ -238,16 +274,28 @@ class Qwen3VLEncoder:
 
 
 class Qwen3VLReranker:
+    """Qwen3-VL cross-encoder reranker for second-stage candidate scoring.
+
+    Fulfils the ``Reranker`` Protocol: given a multimodal ``query`` and a list of
+    candidate ``documents``, returns per-document relevance scores (higher =
+    more relevant), aligned by index. The vendored ``Qwen3VLReranker`` model is
+    imported lazily and built once on first scoring call (or eagerly in the
+    constructor when no ``reranker`` is injected); an injected ``reranker``
+    skips the import. A failed load is cached and re-raised on
+    later calls. Constructor knobs are forwarded only when the backing model's
+    ``__init__`` declares them.
+    """
+
     def __init__(
         self,
         model_path: str = "Qwen/Qwen3-VL-Reranker-8B",
         instruction: str = "Retrieval relevant image or text with user's query",
         fps: float = 1.0,
-        device_id: Optional[int] = None,
+        device_id: int | None = None,
         batch_size: int = 2,
-        torch_dtype: Optional[str] = None,
-        attn_implementation: Optional[str] = None,
-        reranker: Optional[object] = None,
+        torch_dtype: str | None = None,
+        attn_implementation: str | None = None,
+        reranker: object | None = None,
     ) -> None:
         self.model_path = model_path
         self.instruction = instruction
@@ -257,12 +305,21 @@ class Qwen3VLReranker:
         self.torch_dtype = torch_dtype
         self.attn_implementation = attn_implementation
         self._reranker = reranker
-        self._reranker_init_error: Optional[BaseException] = None
+        self._reranker_init_error: BaseException | None = None
         self._reranker_init_attempted = reranker is not None
         if self._reranker is None:
             self._init_reranker()
 
-    def score_mm(self, query: Dict[str, object], documents: List[Dict[str, object]]) -> List[float]:
+    def score_mm(self, query: dict[str, object], documents: list[dict[str, object]]) -> list[float]:
+        """Score each candidate document against the query; aligned by index.
+
+        Returns an empty list if ``query`` is not a dict or ``documents`` is
+        empty. A failed reranker load raises (cached and re-raised); it does not
+        return []. Otherwise returns one score per document
+        (length matches ``documents``), normalized from whatever shape the
+        backend emits (raw floats, ``{"score"/"relevance"/"logit"}`` dicts, or
+        ``(index, value)`` pairs). Higher means more relevant.
+        """
         if not isinstance(query, dict) or not documents:
             return []
         self._init_reranker()
@@ -303,7 +360,7 @@ class Qwen3VLReranker:
             )
             raise self._reranker_init_error
 
-        init_kwargs: Dict[str, object] = {"model_name_or_path": self.model_path}
+        init_kwargs: dict[str, object] = {"model_name_or_path": self.model_path}
         try:
             params = inspect.signature(reranker_cls.__init__).parameters
             if "batch_size" in params:
@@ -346,9 +403,9 @@ class Qwen3VLReranker:
     def _score_with_reranker_mm(
         self,
         reranker: object,
-        query: Dict[str, object],
-        documents: List[Dict[str, object]],
-    ) -> Optional[object]:
+        query: dict[str, object],
+        documents: list[dict[str, object]],
+    ) -> object | None:
         if not hasattr(reranker, "process"):
             raise AttributeError(f"Qwen3VLReranker backend is missing process() type={type(reranker).__name__}")
         inputs = {
@@ -371,7 +428,7 @@ class Qwen3VLReranker:
                 f"err_type={type(exc).__name__} err={exc}"
             ) from exc
 
-    def _normalize_scores(self, scores: Optional[object], expected_len: int) -> List[float]:
+    def _normalize_scores(self, scores: object | None, expected_len: int) -> list[float]:
         if scores is None:
             return []
         if _torch is not None and isinstance(scores, _torch.Tensor):

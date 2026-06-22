@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """service — orchestration layer: CacheService lifecycle and eviction policies.
 
 Note: exact and approximate currently serve different pipelines (LingBot world

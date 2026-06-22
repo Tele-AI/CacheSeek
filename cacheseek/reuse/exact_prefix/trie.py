@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """The forest: root_hash → Namespace; each Namespace a discrete-action trie.
 
 Read-heavy, write-light: lookup is lock-free; commit takes a per-namespace write lock
@@ -33,12 +35,23 @@ class Namespace:
 
 @dataclass(slots=True)
 class PrefixMatch:
+    """Result of descending the action trie: the deepest published node and how
+    many action chunks matched."""
+
     namespace: Namespace | None  # None ⇒ namespace miss (brand-new world, cold start)
     node: TrieNode | None  # deepest matched node (virtual root when K==0)
     matched_len: int  # K — number of matched action chunks
 
 
 class NamespaceForest:
+    """The forest of namespaces (root_hash -> Namespace), each owning one action trie.
+
+    Read-heavy and write-light: ``lookup`` is lock-free; mutating operations take
+    a narrow lock (the forest map for namespace get-or-create, the per-namespace
+    lock for node get-or-create) so concurrent reuse within one world is not
+    serialized.
+    """
+
     def __init__(self) -> None:
         self._namespaces: dict[RootHash, Namespace] = {}
         self._lock = threading.Lock()  # guards only get-or-create on the namespace map
@@ -48,11 +61,18 @@ class NamespaceForest:
         return len(self._namespaces)
 
     def resolve(self, root_hash: RootHash) -> Namespace | None:
+        """Return the existing namespace for root_hash, or None if no such world is known."""
         return self._namespaces.get(root_hash)
 
     def get_or_create_namespace(
         self, root_hash: RootHash, config_blob_hash: bytes
     ) -> Namespace:
+        """Get the namespace for root_hash, creating it (with a virtual root node) if absent.
+
+        Thread-safe: the fast path is a lock-free read; on a miss the forest lock
+        is taken and the entry re-checked before insertion, so concurrent callers
+        share one namespace.
+        """
         ns = self._namespaces.get(root_hash)
         if ns is not None:
             return ns

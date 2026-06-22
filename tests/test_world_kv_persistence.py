@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Cross-process prefix hit for world_kv: NamespaceForest snapshot persistence
 and rebuild.
 

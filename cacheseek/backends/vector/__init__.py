@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Vector backends — collection-scoped vector index with payload.
 
 Implementations are lazy-loaded so ``faiss`` / ``qdrant-client`` are not

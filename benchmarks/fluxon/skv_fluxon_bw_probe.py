@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Fluxon self-KV store bandwidth probe (no model load).
 
 Fakes lingbot-fast self-KV chunks and measures end-to-end **Fluxon** put/get
