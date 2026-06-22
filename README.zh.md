@@ -102,7 +102,35 @@ CacheSeek 是位于推理框架与分布式存储之间的**缓存中间层**。
 
 ## 快速使用
 
-**方案 A：接入你自己的推理框架**（最小，无需 GPU 即可验证）
+### 安装与验证（无需 GPU、无需权重、无需服务）
+
+两个 demo 用内存桩在核心依赖上即可跑通：
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -e .
+python examples/exact_prefix_reuse/quickstart_trie.py        # 精确前缀 trie：命中 / 分叉 / 驱逐（无损）
+python examples/approximate_reuse/quickstart_lifecycle.py    # 近似：先一次 cache MISS，再一次跳步 HIT
+```
+
+> 验证接线：`pip install -e ".[dev]"` 后 `pytest -m smoke`。
+
+### 精确复用 —— 自回归-diffusion 世界模型 (LingBot)
+
+无 `CacheService`：精确路径通过两个运行时 hook 接进引擎的逐 chunk 循环（会话开始时查动作前缀 trie + 物化缓存 KV；每个 finalize 的 chunk 摄入新 KV）。在真实 LingBot-World 上端到端跑、逐字节一致：
+
+```bash
+export TELEFUSER=/path/to/telefuser-internal
+export LINGBOT_WORLD_CHECKPOINT_DIR=/path/to/lingbot-world-base-cam
+ulimit -n 65536
+CUDA_VISIBLE_DEVICES=0 python examples/exact_prefix_reuse/e2e_telefuser_lingbot.py --frame-num 37 --prefix-chunks 2 --out-dir /tmp/worldkv_e2e
+```
+
+> 完整阶梯（trie → KV binding → e2e）：[`examples/exact_prefix_reuse/`](./examples/exact_prefix_reuse/)。
+
+### 近似复用 —— diffusion 视频 (Wan2.2)
+
+这条路径走 `CacheService.from_config(yaml)` —— 两次调用括住推理：
 
 ```python
 from cacheseek import CacheService
@@ -128,16 +156,7 @@ rerank_enabled: false           # 打开需 Qwen3-VL 权重 + GPU
 
 > 完整模板 [`quickstart.yaml`](./quickstart.yaml)，全部字段见 `CacheConfig` dataclass（[`./cacheseek/service/config.py`](./cacheseek/service/config.py)）。
 
-**本地验证（无需 GPU、无需权重、无需服务）** —— 两个 demo 用内存桩在核心依赖上即可跑通：
-
-```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -e .
-python examples/approximate_reuse/quickstart_lifecycle.py   # 先打印一次 cache MISS，再打印一次跳过 denoise 步的 HIT
-python examples/exact_prefix_reuse/quickstart_trie.py        # 精确前缀 trie 复用 demo
-```
-
-**方案 B：用 TeleFuser 端到端跑**（需 GPU + Wan2.2-14B + Qwen3-VL 权重）
+用 TeleFuser 端到端跑（需 GPU + Wan2.2-14B + Qwen3-VL 权重）：
 
 ```bash
 <telefuser>/.venv/bin/pip install -e ".[all,dev]"    # 1. 装进 TeleFuser 的 venv，带全部后端 + 测试依赖（见下方说明）
@@ -150,14 +169,31 @@ bash examples/approximate_reuse/service/start_wan22_service.sh --preset s1_rw_fl
 
 > **Extras。** `[all]` = `qdrant` + `faiss`（vector store）+ `encoder`（Qwen3-VL embed/rerank 依赖：`transformers`、`qwen_vl_utils`、`scipy`、`sentencepiece`）；`[dev]` 追加第 2 步所需的测试依赖（`pytest` 等）。只跑最小 lifecycle 冒烟（`video_embedding_enabled: false`、`rerank_enabled: false`）可不装 extras；要真命中 / rerank 才装 `[all,dev]`。torch 由 TeleFuser 的 `pyproject` pin 在已验证的 `2.7.0+cu126`。请先按 TeleFuser 自己的 README 建好它的 venv。
 
-> TeleFuser 下同一份 `CacheConfig` 不写 YAML，而是 pipeline 文件里的模块级 `CACHE_CONFIG`（dict，字段同方案 A；非法 key 自动丢弃）。命令行 `--enable-latent-cache` / `cache_mode` 可覆盖。
+> **为什么用 TeleFuser 的 venv？** CacheSeek 嵌在框架的*进程*里 —— 它的 adapter 以内存 tensor 把缓存 latent 交给 Wan2.2 pipeline —— 所以它装进 TeleFuser 的 venv，而非自建 venv。形态同 vLLM venv 里的 [LMCache](https://github.com/LMCache/LMCache) / [Mooncake](https://github.com/kvcache-ai/Mooncake) connector：connector 跑在框架进程里，KV/latent 存储（这里是 Fluxon / Qdrant）是独立服务。启动器 `.sh` 在本仓库的 `TeleFuser/` 同级目录找该 venv；若布局不同，直接用 `<telefuser>/.venv/bin/python` 跑 `.py`。
+
+> TeleFuser 下同一份 `CacheConfig` 不写 YAML，而是 pipeline 文件里的模块级 `CACHE_CONFIG`（dict，字段相同；非法 key 自动丢弃）。命令行 `--enable-latent-cache` / `cache_mode` 可覆盖。
 
 ---
 
 ## 关键配置
 
-所有字段定义请见 [`CacheConfig`](./cacheseek/service/config.py)。
+### 精确复用 —— `WorldKVConfig`
 
+定义见 [`cacheseek/reuse/exact_prefix/config.py`](./cacheseek/reuse/exact_prefix/config.py)。
+
+| 字段             | 影响                                                  |
+| -------------- | --------------------------------------------------- |
+| `window_chunks` | `W` —— 局部注意力窗口，以 chunk 为单位                          |
+| `sink_chunks`   | 钉住的窗口头部（永不驱逐的头部 chunk）                              |
+| `break_even_k`  | 能回本的最小复用前缀长度；低于它就不走缓存、直接生成 —— 无害                    |
+| `quant`         | `none`（bf16，无损默认）/ `int8` / `int4` —— 量化只在质量 A/B 通过后才开启 |
+| `commit_tier`   | 已提交 KV 落在哪一层（例如 Fluxon DRAM）                        |
+
+`break_even_k` 不是魔法常数：`WorldKVConfig.from_geometry(...)` 由模型几何 + 实测的单 chunk 重算耗时 + KV 取数带宽推导 —— 只有当 `K·重算 > fixed + min(K,W)·取数` 时才复用长度 `K` 的前缀。
+
+### 近似复用 —— `CacheConfig`
+
+所有字段定义请见 [`CacheConfig`](./cacheseek/service/config.py)。
 
 | 字段                       | 默认                    | 影响                                                      |
 | ------------------------ | --------------------- | ------------------------------------------------------- |
@@ -171,7 +207,7 @@ bash examples/approximate_reuse/service/start_wan22_service.sh --preset s1_rw_fl
 
 完整字段清单见 `CacheConfig` dataclass（[`./cacheseek/service/config.py`](./cacheseek/service/config.py)）。
 
-### 阶梯跳步（按 rerank 分数分档）
+#### 阶梯跳步（按 rerank 分数分档）
 
 可选开启（`staircase_skip_enabled=True`，默认 `False`）。开启后，`rerank_enabled` 打开且拿到 rerank 分数时，跳步深度**不是**固定的 `max_skip_step`，而是按 donor 的 rerank 相似度分档：分越高越能多复用 donor 的去噪轨迹，分越低跳得越浅（或干脆不复用）。跳步始终受 `max_skip_step` 上限约束，并只落在 donor 实际快照过的步（`saved_steps`）。无 rerank 分数时（或未开启时）退回旧逻辑「saved_steps 中 ≤ `max_skip_step` 的最大步」。
 
@@ -189,21 +225,26 @@ bash examples/approximate_reuse/service/start_wan22_service.sh --preset s1_rw_fl
 
 ## 集成
 
-CacheSeek 沿以下维度组织：
+CacheSeek 接进引擎时，每类复用对应一种集成形态：
 
+| 复用类别 | 参考引擎 / 模型 | 集成点 | 如何接入 |
+|---|---|---|---|
+| **精确前缀**（自回归-diffusion 世界模型） | TeleFuser × **LingBot-World** | `LingBotWorldKVBinding`（两个运行时 hook） | `on_runtime_created` → 查动作前缀 trie + 物化缓存 KV；`on_chunk_finalized` → 摄入该 chunk 的 KV |
+| **近似**（视频 DiT） | TeleFuser × **Wan2.2-14B** | `TeleFuserCacheAdapter`（一个 `FrameworkAdapter`） | `build_query` → `CacheService.lookup` → `apply_resume`（跳步）→ `on_response` → `CacheService.save` |
 
-| 维度         | 当前实现                            | 计划 / 预留                                                       | 抽象                 |
-| ---------- | ------------------------------- | ------------------------------------------------------------- | ------------------ |
-| 推理框架       | **TeleFuser**                   | vLLM-Omni、SGLang-Diffusion                                    | `FrameworkAdapter` |
-| 模型 Profile | 预留（Wan2.2 路径 config 驱动） | LTX-Video、OpenSora、HunyuanVideo、SDXL / Flux、World Model / VLA | `ModelProfile`     |
-| 缓存策略       | **ExactPrefixCache**（会话续写 / 前缀树）+ **VideoBasedApproximateCache** | NIRVANA / ReDi / ReCon / Chorus、hybrid             | `Strategy`         |
-| KV 后端      | **Fluxon** + 本地磁盘（`local_file`） | Mooncake 等                                                    | `KVStore`          |
-| Vector 后端  | **FAISS** + `Qdrant`            | 其他向量检索后端                                                      | `VectorStore`      |
+**新增自回归-diffusion 引擎（精确）**：把两个 binding hook（会话开始时 lookup + 物化；每个 finalize 的 chunk 摄入）接进你的 runtime，以动作前缀为 key。
 
+**新增推理框架（近似）**：在 `cacheseek/adapters/<framework>/` 下实现 `FrameworkAdapter` Protocol（`build_query` / `apply_resume` / `on_response`）即可，缓存策略、KV 与 vector 后端不动。
 
-**新增推理框架**：在 `cacheseek/adapters/<framework>/` 下实现 `FrameworkAdapter` Protocol（`build_query` / `apply_resume` / `on_response`）即可，缓存策略、KV 与 vector 后端不动。
+### 可插拔轴
 
-**新增缓存策略**：实现 `Strategy` Protocol，并声明它依赖的 `ModelProfile`、payload 格式、检索逻辑、命中判定、save 行为。
+| 轴 | 当前实现 | 计划 / 预留 | 抽象 |
+|---|---|---|---|
+| 缓存策略 | **ExactPrefixCache** + **VideoBasedApproximateCache** | NIRVANA / ReDi / ReCon / Chorus、hybrid | `Strategy` |
+| KV / tensor 存储 | **Fluxon** + 本地磁盘（`local_file`） | Mooncake 等 | `KVStore` |
+| Vector 存储 —— 仅近似 | **FAISS** + `Qdrant` | 其他向量检索后端 | `VectorStore` |
+| Encoder / reranker —— 仅近似 | **Qwen3-VL** | —— | `Encoder` / `Reranker` |
+| 模型 Profile | **Wan2.2**（近似）+ **LingBot-World**（精确） | LTX-Video、OpenSora、HunyuanVideo、VLA | `ModelProfile` |
 
 ---
 
