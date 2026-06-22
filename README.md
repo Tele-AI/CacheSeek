@@ -109,7 +109,35 @@ This is an early **alpha** (`0.1.0a1`). Read before depending on it:
 
 ## Quickstart
 
-**Option A: integrate into your own inference framework** (minimal, no GPU needed to verify)
+### Install & verify (no GPU, no weights, no services)
+
+Both demos pass on core deps using in-memory stubs:
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -e .
+python examples/exact_prefix_reuse/quickstart_trie.py        # exact-prefix trie: hit / fork / eviction (lossless)
+python examples/approximate_reuse/quickstart_lifecycle.py    # approximate: a cache MISS, then a step-skipping HIT
+```
+
+> For wiring checks, `pip install -e ".[dev]"` then `pytest -m smoke`.
+
+### Exact reuse — AR-diffusion world models (LingBot)
+
+No `CacheService`: the exact path binds into the engine's per-chunk loop via two runtime hooks (look up the action-prefix trie + materialize cached KV on session start; ingest the new KV per finalized chunk). Run end to end on real LingBot-World, byte-exact:
+
+```bash
+export TELEFUSER=/path/to/telefuser-internal
+export LINGBOT_WORLD_CHECKPOINT_DIR=/path/to/lingbot-world-base-cam
+ulimit -n 65536
+CUDA_VISIBLE_DEVICES=0 python examples/exact_prefix_reuse/e2e_telefuser_lingbot.py --frame-num 37 --prefix-chunks 2 --out-dir /tmp/worldkv_e2e
+```
+
+> Full ladder (trie → KV binding → e2e): [`examples/exact_prefix_reuse/`](./examples/exact_prefix_reuse/).
+
+### Approximate reuse — diffusion video (Wan2.2)
+
+This path goes through `CacheService.from_config(yaml)` — two calls bracket inference:
 
 ```python
 from cacheseek import CacheService
@@ -135,16 +163,7 @@ rerank_enabled: false           # on requires Qwen3-VL weights + a GPU
 
 > Full template: [`quickstart.yaml`](./quickstart.yaml). All fields: the `CacheConfig` dataclass ([`./cacheseek/service/config.py`](./cacheseek/service/config.py)).
 
-**Verify locally (no GPU, no weights, no services)** — both demos pass on core deps using in-memory stubs:
-
-```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -e .
-python examples/approximate_reuse/quickstart_lifecycle.py   # prints a cache MISS, then a HIT that skips denoise steps
-python examples/exact_prefix_reuse/quickstart_trie.py        # exact-prefix trie reuse demo
-```
-
-**Option B: run end to end with TeleFuser** (needs GPU + Wan2.2-14B + Qwen3-VL weights)
+Run it end to end with TeleFuser (needs GPU + Wan2.2-14B + Qwen3-VL weights):
 
 ```bash
 <telefuser>/.venv/bin/pip install -e ".[all,dev]"    # 1. install INTO TeleFuser's venv, with all backends + test deps (see notes)
@@ -157,13 +176,29 @@ bash examples/approximate_reuse/service/start_wan22_service.sh --preset s1_rw_fl
 
 > **Extras.** `[all]` = `qdrant` + `faiss` (vector stores) + `encoder` (the Qwen3-VL embed/rerank deps: `transformers`, `qwen_vl_utils`, `scipy`, `sentencepiece`); `[dev]` adds the test deps (`pytest` etc.) needed for step 2. Omit the extras for a bare lifecycle smoke (`video_embedding_enabled: false`, `rerank_enabled: false`); install `[all,dev]` for real hits / rerank. torch is pinned to the validated `2.7.0+cu126` by TeleFuser's `pyproject`. Build TeleFuser's venv per its own README first.
 
-> **Why TeleFuser's venv?** CacheSeek embeds in the framework's *process* — its adapter hands cached latents to the Wan2.2 pipeline as in-memory tensors — so it installs **into TeleFuser's venv**, not a venv of its own. Same shape as an [LMCache](https://github.com/LMCache/LMCache) / [Mooncake](https://github.com/kvcache-ai/Mooncake) connector inside vLLM's venv: the connector rides in the framework's process, the KV/latent **store** (Fluxon / Qdrant here) is a separate service. The launcher's `.sh` looks for that venv at a `TeleFuser/` *sibling* of this repo; if your layout differs, activate the venv or run the `.py` with `<telefuser>/.venv/bin/python` directly.
+> **Why TeleFuser's venv?** CacheSeek embeds in the framework's *process* — its adapter hands cached latents to the Wan2.2 pipeline as in-memory tensors — so it installs into TeleFuser's venv, not a venv of its own. Same shape as an [LMCache](https://github.com/LMCache/LMCache) / [Mooncake](https://github.com/kvcache-ai/Mooncake) connector inside vLLM's venv: the connector rides in the framework's process; the KV/latent store (Fluxon / Qdrant) is a separate service. The launcher's `.sh` looks for that venv at a `TeleFuser/` sibling of this repo; if your layout differs, run the `.py` with `<telefuser>/.venv/bin/python` directly.
 
-> Under TeleFuser the same `CacheConfig` isn't YAML but a module-level `CACHE_CONFIG` in the pipeline file (a dict, same fields as Option A; unknown keys are dropped). CLI `--enable-latent-cache` / `cache_mode` override it.
+> Under TeleFuser the same `CacheConfig` isn't YAML but a module-level `CACHE_CONFIG` in the pipeline file (a dict, same fields; unknown keys are dropped). CLI `--enable-latent-cache` / `cache_mode` override it.
 
 ---
 
 ## Key configuration
+
+### Exact reuse — `WorldKVConfig`
+
+Defined in [`cacheseek/reuse/exact_prefix/config.py`](./cacheseek/reuse/exact_prefix/config.py).
+
+| Field | Effect |
+|---|---|
+| `window_chunks` | `W` — the local attention window, measured in chunks |
+| `sink_chunks` | Pinned window head (the chunks at the head that are never evicted) |
+| `break_even_k` | Smallest reused-prefix length that pays off; below it, skip the cache and just generate — harmless |
+| `quant` | `none` (bf16, lossless default) / `int8` / `int4` — enable quantization only after a quality A/B passes |
+| `commit_tier` | Where committed KV lives (e.g. Fluxon DRAM) |
+
+`break_even_k` is not a magic constant: `WorldKVConfig.from_geometry(...)` derives it from model geometry + a measured per-chunk recompute time + KV-fetch bandwidth — reuse a length-`K` prefix only when `K·recompute > fixed + min(K,W)·fetch`.
+
+### Approximate reuse — `CacheConfig`
 
 All fields are defined in [`CacheConfig`](./cacheseek/service/config.py).
 
@@ -178,7 +213,7 @@ All fields are defined in [`CacheConfig`](./cacheseek/service/config.py).
 
 The full field list lives in the `CacheConfig` dataclass ([`./cacheseek/service/config.py`](./cacheseek/service/config.py)).
 
-### Staircase skip-step (rerank-score-tiered)
+#### Staircase skip-step (rerank-score-tiered)
 
 Opt-in (`staircase_skip_enabled=True`, default `False`). When enabled, `rerank_enabled` is on, and a rerank score is available, the skip depth is **not** a flat `max_skip_step`; it is tiered by the donor's rerank similarity — a higher score lets the request reuse more of the donor's denoise trajectory, a lower score keeps the skip shallow (or skips reuse entirely). The skip is always clamped to `max_skip_step` and snapped to a step the donor actually checkpointed (`saved_steps`). With no rerank score (or when disabled) it falls back to the legacy "largest saved step ≤ `max_skip_step`".
 
@@ -196,19 +231,26 @@ The tier thresholds live in `skip_step_tau_table` (default 0.20-SLO `{3: 0.63, 7
 
 ## Integration
 
-CacheSeek is organized along the following dimensions:
+CacheSeek plugs into an engine through one integration shape per reuse family:
 
-| Dimension | Current implementation | Planned / reserved | Abstraction |
+| Reuse family | Reference engine / model | Integration point | How it hooks in |
 |---|---|---|---|
-| Inference Framework | **TeleFuser** | vLLM-Omni, SGLang-Diffusion | `FrameworkAdapter` |
-| Model Profile | Reserved (Wan2.2 path is config-driven) | LTX-Video, OpenSora, HunyuanVideo, SDXL / Flux, World Model / VLA | `ModelProfile` |
-| Caching Strategy | **ExactPrefixCache** (session continuation / prefix tree) + **VideoBasedApproximateCache** | NIRVANA / ReDi / ReCon / Chorus, hybrid | `Strategy` |
-| KV Backend | **Fluxon** + local disk (`local_file`) | Mooncake, others | `KVStore` |
-| Vector Backend | **FAISS** + `Qdrant` | Other vector retrieval backends | `VectorStore` |
+| **Exact prefix** (AR-diffusion world model) | TeleFuser × **LingBot-World** | `LingBotWorldKVBinding` (two runtime hooks) | `on_runtime_created` → action-prefix trie lookup + materialize cached KV; `on_chunk_finalized` → ingest the chunk's KV |
+| **Approximate** (video DiT) | TeleFuser × **Wan2.2-14B** | `TeleFuserCacheAdapter` (a `FrameworkAdapter`) | `build_query` → `CacheService.lookup` → `apply_resume` (skip steps) → `on_response` → `CacheService.save` |
 
-**Adding an inference framework**: implement the `FrameworkAdapter` Protocol (`build_query` / `apply_resume` / `on_response`) under `cacheseek/adapters/<framework>/` — caching strategy, KV, and vector backends stay untouched.
+**Adding an AR-diffusion engine (exact):** wire the two binding hooks (lookup + materialize on session start; ingest per finalized chunk) into your runtime, keyed on the action prefix.
 
-**Adding a caching strategy**: implement the `Strategy` Protocol and declare the `ModelProfile`, payload format, retrieval logic, hit decision, and save behavior it depends on.
+**Adding an inference framework (approximate):** implement the `FrameworkAdapter` Protocol (`build_query` / `apply_resume` / `on_response`) under `cacheseek/adapters/<framework>/` — caching strategy, KV, and vector backends stay untouched.
+
+### Pluggable axes
+
+| Axis | Current implementation | Planned / reserved | Abstraction |
+|---|---|---|---|
+| Caching strategy | **ExactPrefixCache** + **VideoBasedApproximateCache** | NIRVANA / ReDi / ReCon / Chorus, hybrid | `Strategy` |
+| KV / tensor store | **Fluxon** + local disk (`local_file`) | Mooncake, others | `KVStore` |
+| Vector store — approximate only | **FAISS** + `Qdrant` | Other vector retrieval backends | `VectorStore` |
+| Encoder / reranker — approximate only | **Qwen3-VL** | — | `Encoder` / `Reranker` |
+| Model profiles | **Wan2.2** (approximate) + **LingBot-World** (exact) | LTX-Video, OpenSora, HunyuanVideo, VLA | `ModelProfile` |
 
 ---
 
