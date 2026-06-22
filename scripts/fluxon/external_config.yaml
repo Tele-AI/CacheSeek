@@ -1,0 +1,9 @@
+instance_key: telefuser_cache_external_1
+
+fluxonkv_spec:
+  cluster_name: demo-kv-cluster
+  shared_memory_path: /dev/shm/fluxon_kv_demo
+  shared_file_path: /tmp/fluxon_kv_demo/shared
+
+test_spec_config:
+  disable_observability: true

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CacheSeek 架构图</title>
+<style>
+  :root { --gap: 18px; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 40px 28px 48px;
+    background: #fafbfd;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+    color: #1f2430;
+  }
+  .wrap { max-width: 1520px; margin: 0 auto; }
+
+  header.title { text-align: center; margin-bottom: 6px; }
+  header.title h1 { font-size: 26px; margin: 0; letter-spacing: .5px; }
+  header.title .sub {
+    font-size: 13.5px; color: #5b6472; margin-top: 7px;
+    font-weight: 500;
+  }
+  header.title .tagline {
+    display: inline-block; margin-top: 10px; font-size: 12px; color: #4a5160;
+    background: #eef1f7; border: 1px solid #dfe4ee; border-radius: 999px;
+    padding: 4px 14px;
+  }
+
+  /* one horizontal layer band */
+  .layer {
+    position: relative;
+    border-radius: 14px;
+    padding: 16px 20px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: stretch;
+    gap: var(--gap);
+    border: 1px solid var(--band-border);
+    background: var(--band-bg);
+  }
+
+  /* left colored label chip */
+  .chip {
+    flex: 0 0 122px;
+    align-self: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 15px;
+    text-align: center;
+    padding: 11px 8px;
+    border-radius: 9px;
+    background: var(--chip);
+    line-height: 1.35;
+  }
+  .chip small { display: block; font-size: 10.5px; font-weight: 600; opacity: .85; margin-top: 2px; }
+
+  .cols { flex: 1 1 auto; display: flex; align-items: stretch; gap: 0; }
+
+  .box {
+    background: #fff;
+    border: 1.5px solid var(--accent);
+    border-radius: 11px;
+    padding: 13px 16px;
+    display: flex; flex-direction: column; justify-content: center;
+    min-height: 78px;
+  }
+  .box .t { font-weight: 700; color: var(--accent-strong); font-size: 14.5px; line-height: 1.3; }
+  .box .d { font-size: 11.5px; color: #51596a; margin-top: 5px; line-height: 1.45; }
+  .box .planned { font-size: 10.5px; color: #8a94a6; margin-top: 6px; font-style: italic; }
+
+  .box.left  { flex: 0 0 270px; }
+  .box.center {
+    flex: 1 1 auto; margin: 0 0;
+    background: var(--center-bg);
+    border-width: 2px;
+  }
+  .box.right { flex: 0 0 270px; }
+
+  /* dashed horizontal connector inside a row */
+  .harrow {
+    flex: 0 0 34px; align-self: center; position: relative; height: 2px;
+  }
+  .harrow::before {
+    content: ""; position: absolute; top: 50%; left: 4px; right: 10px;
+    border-top: 2px dashed var(--accent);
+  }
+  .harrow::after {
+    content: ""; position: absolute; top: 50%; right: 4px;
+    transform: translateY(-50%);
+    border-left: 7px solid var(--accent);
+    border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+  }
+
+  /* solid vertical arrow between bands (the data path) */
+  .varrow { display: flex; justify-content: center; height: 26px; }
+  .varrow svg { display: block; }
+
+  footer.legend {
+    margin-top: 22px; display: flex; gap: 26px; flex-wrap: wrap;
+    justify-content: center; font-size: 12px; color: #5b6472;
+  }
+  footer.legend .item { display: flex; align-items: center; gap: 7px; }
+  footer.legend .swatch { width: 26px; height: 0; border-top: 2px solid #9aa3b2; }
+  footer.legend .swatch.dashed { border-top: 2px dashed #9aa3b2; }
+  .note { text-align:center; font-size: 11.5px; color:#8a94a6; margin-top: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="title">
+    <h1>CacheSeek 架构图 · Cross-request KV Cache Middleware</h1>
+    <div class="sub">夹在推理框架与存储后端之间的缓存服务中间件 — 拥有复用 / 检索 / 命中决策 / 元数据 / 策略逻辑</div>
+    <div class="tagline">Protocol-driven · 框架 / 策略 / KV 后端 / 向量后端 四个维度均可热插拔</div>
+  </header>
+
+  <!-- ============ Layer 1: 接入层 ============ -->
+  <div class="layer" style="--band-bg:#eef4ff; --band-border:#cfe0ff; --chip:#2f6bff; --accent:#5f8bff; --accent-strong:#1b3a8f; --center-bg:#e3ecff;">
+    <div class="chip">接入层<small>Integration</small></div>
+    <div class="cols">
+      <div class="box left">
+        <div class="t">推理框架 Inference Framework</div>
+        <div class="d">TeleFuser（Wan2.2 video DiT · LingBot-Fast 世界模型两条 runtime）</div>
+        <div class="planned">planned: vLLM-Omni / SGLang-Diffusion</div>
+      </div>
+      <div class="harrow"></div>
+      <div class="box center">
+        <div class="t">框架适配器 · FrameworkAdapter</div>
+        <div class="d">build_query · apply_resume · on_response &nbsp;|&nbsp; adapters/telefuser · adapters/lingbot_fast（self-KV / cross-attn 桥接）</div>
+      </div>
+      <div class="harrow"></div>
+      <div class="box right">
+        <div class="t">配置入口 CacheConfig</div>
+        <div class="d">quickstart.yaml · CacheService.from_config</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="varrow"><svg width="20" height="26"><line x1="10" y1="0" x2="10" y2="18" stroke="#7c8597" stroke-width="2"/><polygon points="10,26 5,17 15,17" fill="#7c8597"/></svg></div>
+
+  <!-- ============ Layer 2: 服务编排层 ============ -->
+  <div class="layer" style="--band-bg:#e7f6f1; --band-border:#c4e8de; --chip:#1a7a62; --accent:#2fae8e; --accent-strong:#10654f; --center-bg:#d7f1e8;">
+    <div class="chip">服务编排层<small>Orchestration</small></div>
+    <div class="cols">
+      <div class="box left">
+        <div class="t">CacheService 入口</div>
+        <div class="d">core/lifecycle.py · 后端装配 connection.py</div>
+      </div>
+      <div class="harrow"></div>
+      <div class="box center">
+        <div class="t">异步查存编排 · 命中决策</div>
+        <div class="d">lookup → 检索 + rerank 命中判定 → fetch 可复用状态 &nbsp;|&nbsp; save → 落盘 latents / KV &nbsp;|&nbsp; Hit Decision (rerank_score_threshold)</div>
+      </div>
+      <div class="harrow"></div>
+      <div class="box right">
+        <div class="t">审计与监控 AuditLog</div>
+        <div class="d">JSONL 审计 · core/log_monitor 实时监控</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="varrow"><svg width="20" height="26"><line x1="10" y1="0" x2="10" y2="18" stroke="#7c8597" stroke-width="2"/><polygon points="10,26 5,17 15,17" fill="#7c8597"/></svg></div>
+
+  <!-- ============ Layer 3: 策略与画像层 ============ -->
+  <div class="layer" style="--band-bg:#ecf8ee; --band-border:#cce9d2; --chip:#2f9e4f; --accent:#48b96a; --accent-strong:#1f7a3b; --center-bg:#dcf2e1;">
+    <div class="chip">策略与画像层<small>Strategy & Profile</small></div>
+    <div class="cols">
+      <div class="box left">
+        <div class="t">协议契约 Protocols</div>
+        <div class="d">Strategy · ModelProfile · Payload</div>
+        <div class="planned">profiles/: diffusion-video · lingbot-fast</div>
+      </div>
+      <div class="harrow"></div>
+      <div class="box center">
+        <div class="t">缓存策略 · 多形态复用</div>
+        <div class="d">VideoBasedApproximateCache（Wan2.2）&nbsp;|&nbsp; lingbot_fast: self-KV prefix · cross-attn KV · embedding cache</div>
+        <div class="planned">planned: NIRVANA / ReDi / ReCon / Chorus · exact-hash · hybrid</div>
+      </div>
+      <div class="harrow"></div>
+      <div class="box right">
+        <div class="t">淘汰策略 Eviction</div>
+        <div class="d">core/eviction · kv_manager/eviction（victim_score）</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="varrow"><svg width="20" height="26"><line x1="10" y1="0" x2="10" y2="18" stroke="#7c8597" stroke-width="2"/><polygon points="10,26 5,17 15,17" fill="#7c8597"/></svg></div>
+
+  <!-- ============ Layer 4: 检索与编码层 ============ -->
+  <div class="layer" style="--band-bg:#fff3e6; --band-border:#ffe0c0; --chip:#e8590c; --accent:#f5853f; --accent-strong:#c14a00; --center-bg:#ffe8d3;">
+    <div class="chip">检索与编码层<small>Retrieval & Encoding</small></div>
+    <div class="cols">
+      <div class="box left">
+        <div class="t">编码 / 重排模型</div>
+        <div class="d">Qwen3-VL Embedding · Reranker &nbsp;(core/src/models)</div>
+      </div>
+      <div class="harrow"></div>
+      <div class="box center">
+        <div class="t">编码 → 向量检索 → 重排</div>
+        <div class="d">Encoder Runtime（prompt / video embedding）· Vector Search（top-k）· Rerank（score 命中）</div>
+      </div>
+      <div class="harrow"></div>
+      <div class="box right">
+        <div class="t">元数据 MetadataStore</div>
+        <div class="d">LocalCacheMetadataManager (backends/metadata)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="varrow"><svg width="20" height="26"><line x1="10" y1="0" x2="10" y2="18" stroke="#7c8597" stroke-width="2"/><polygon points="10,26 5,17 15,17" fill="#7c8597"/></svg></div>
+
+  <!-- ============ Layer 5: 存储后端层 ============ -->
+  <div class="layer" style="--band-bg:#f1ecfb; --band-border:#ddd0f5; --chip:#7c4dff; --accent:#9266ff; --accent-strong:#5a32cc; --center-bg:#e6ddfb;">
+    <div class="chip">存储后端层<small>Storage Backend</small></div>
+    <div class="cols">
+      <div class="box left">
+        <div class="t">KV 后端 + UnifiedKVManager</div>
+        <div class="d">block_pool · allocator · prefix_index · KVConnector 分层（gpu / cpu / local_file / fluxon）</div>
+      </div>
+      <div class="harrow"></div>
+      <div class="box center">
+        <div class="t">分布式缓存底座 KVStore</div>
+        <div class="d">Fluxon（分布式）· local_file（本地盘）· memory &nbsp;|&nbsp; 按 B* = V_kv / t_recompute 盈亏线分层落 tier</div>
+        <div class="planned">planned: Mooncake / 其他底座</div>
+      </div>
+      <div class="harrow"></div>
+      <div class="box right">
+        <div class="t">向量后端 VectorStore</div>
+        <div class="d">FAISS（本地）· Qdrant（服务部署推荐）</div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="legend">
+    <div class="item"><span class="swatch"></span>实线箭头：请求主数据路径（lookup / save 沿层下行）</div>
+    <div class="item"><span class="swatch dashed"></span>虚线箭头：层内 输入 → 主体 → 辅助 依赖</div>
+  </footer>
+  <div class="note">CacheSeek 是 in-request cache（cache-dit / DeepCache / TGate / TeaCache）的正交补充：跨请求、可持久化、按 embedding + rerank 命中。</div>
+
+</div>
+</body>
+</html>

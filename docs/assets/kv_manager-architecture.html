@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UnifiedKVManager 架构图</title>
+<style>
+  :root{
+    --ink:#1b2230; --muted:#5d6678; --faint:#98a1b2; --line:#e4e8f0; --bg:#f6f7fb;
+    --accent:#6d5cff; --accent-deep:#4733c9; --accent-tint:#f0eeff; --accent-line:#cdc6ff;
+    --live:#1f9d57; --live-tint:#e9f6ef; --live-line:#bfe3cd; --live-deep:#11663a;
+    --slate:#56607a; --slate-tint:#f1f3f8; --slate-line:#d7dde9;
+    --plan:#9aa3b4; --plan-line:#cfd5e0;
+    --st:#0e8f74; --st-tint:#e8f6f1; --st-line:#c4e8de;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; padding:36px 26px 40px;
+    background:radial-gradient(1200px 400px at 50% -110px,#edefff 0%,rgba(237,239,255,0) 70%),var(--bg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Roboto,sans-serif;
+    color:var(--ink); -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1240px; margin:0 auto;}
+  .head{text-align:center; margin-bottom:14px;}
+  .head h1{margin:0; font-size:24px;} .head h1 b{color:var(--accent-deep);}
+  .head .sub{margin-top:7px; font-size:12.5px; color:var(--muted);}
+
+  /* legend */
+  .legend{display:flex; gap:16px; justify-content:center; margin:12px 0 18px; flex-wrap:wrap; font-size:11.5px;}
+  .legend .it{display:flex; align-items:center; gap:7px; color:var(--muted);}
+  .sw{width:24px; height:14px; border-radius:4px;}
+  .sw.l1{background:var(--live-tint); border:1.5px solid var(--live);}
+  .sw.l2{background:#fff; border:1.5px solid var(--slate);}
+  .sw.l3{background:#fbfcfe; border:1.5px dashed var(--plan-line);}
+
+  .mono{font-family:var(--mono);}
+  /* context bands */
+  .ctx{border-radius:11px; padding:11px 16px; font-size:12px; display:flex; align-items:center; gap:12px;}
+  .ctx .lv{font-size:10.5px; font-weight:700; letter-spacing:.1em; color:var(--faint); flex:0 0 34px;}
+  .ctx.l0{border:1.5px dashed var(--plan-line); background:#fbfcfe; color:var(--plan);}
+  .ctx.l2{border:1.5px solid var(--live-line); background:var(--live-tint); color:var(--live-deep);}
+  .ctx b{font-weight:700;} .ctx .k{font-family:var(--mono); font-size:11px;}
+  .ctx .strat{display:flex; gap:7px; flex-wrap:wrap;}
+  .ctx .stag{background:#fff; border:1px solid var(--live-line); border-radius:6px; padding:2px 8px; font-size:11px; color:var(--live-deep);}
+
+  .vlink{display:flex; justify-content:center; align-items:center; gap:8px; height:30px; font-family:var(--mono); font-size:10.5px; color:var(--muted);}
+
+  /* hero L3 */
+  .hero{background:#fff; border:2px solid var(--accent); border-radius:16px; box-shadow:0 18px 40px -24px rgba(78,58,201,.5); overflow:hidden;}
+  .hero .bar{background:linear-gradient(90deg,var(--accent),#8d7eff); color:#fff; padding:11px 20px; display:flex; align-items:baseline; gap:10px;}
+  .hero .bar .nm{font-size:16px; font-weight:800;} .hero .bar .nm span{font-weight:500; font-size:12px; opacity:.88; margin-left:6px;}
+  .hero .bar .tag{margin-left:auto; font-size:11px; opacity:.9;}
+  .hero .inner{padding:16px 18px 18px;}
+
+  /* the live path strip */
+  .livepath{border:2px solid var(--live); background:var(--live-tint); border-radius:11px; padding:12px 15px; margin-bottom:15px;}
+  .livepath .h{font-weight:800; color:var(--live-deep); font-size:14px; display:flex; align-items:center; gap:8px;}
+  .livepath .h .dot{width:8px; height:8px; border-radius:50%; background:var(--live);}
+  .livepath .h .fn{font-family:var(--mono); font-size:12.5px;}
+  .livepath .flow{display:flex; align-items:center; gap:0; margin-top:9px; flex-wrap:nowrap;}
+  .lp{background:#fff; border:1.4px solid var(--live-line); border-radius:9px; padding:8px 12px; font-size:11.5px; color:var(--live-deep); flex:1;}
+  .lp .b{font-weight:700;}
+  .lp .s{font-size:10.3px; color:#3f8a60; margin-top:2px;}
+  .lpar{flex:0 0 26px; align-self:center; position:relative; height:2px;}
+  .lpar::before{content:""; position:absolute; top:50%; left:2px; right:9px; border-top:2px solid var(--live-line);}
+  .lpar::after{content:""; position:absolute; top:50%; right:1px; transform:translateY(-50%); border-left:7px solid var(--live); border-top:5px solid transparent; border-bottom:5px solid transparent;}
+  .livepath .cap{margin-top:9px; font-size:10.8px; color:#3f8a60;}
+  .livepath .cap .k{font-family:var(--mono);}
+
+  /* component groups grid */
+  .grid{display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;}
+  .grp{border-radius:11px; padding:11px 13px;}
+  .grp .gh{font-size:12px; font-weight:800; margin-bottom:9px; display:flex; align-items:center; gap:7px;}
+  .grp .gh .pin{font-size:9px; font-weight:700; border-radius:5px; padding:1px 6px;}
+  .box{border-radius:8px; padding:8px 11px; margin-bottom:7px;}
+  .box:last-child{margin-bottom:0;}
+  .box .t{font-weight:700; font-size:12.3px; font-family:var(--mono);}
+  .box .d{font-size:10.5px; margin-top:3px; line-height:1.4;}
+
+  /* tier styling */
+  .t1{border:1.5px solid var(--live-line); background:var(--live-tint);} .t1 .t{color:var(--live-deep);} .t1 .d{color:#3f8a60;}
+  .t2{border:1.5px solid var(--slate-line); background:#fff;} .t2 .t{color:var(--slate);} .t2 .d{color:var(--muted);}
+  .t3{border:1.5px dashed var(--plan-line); background:#fbfcfe;} .t3 .t{color:var(--plan);} .t3 .d{color:var(--plan);}
+  .grp.g1{background:var(--live-tint); border:1px solid var(--live-line);} .grp.g1 .gh{color:var(--live-deep);} .grp.g1 .gh .pin{background:var(--live); color:#fff;}
+  .grp.g2{background:var(--slate-tint); border:1px solid var(--slate-line);} .grp.g2 .gh{color:var(--slate);} .grp.g2 .gh .pin{background:var(--slate); color:#fff;}
+
+  /* not-wired lifecycle strip */
+  .nowire{margin-top:13px; border:1.5px dashed var(--plan-line); background:#fbfcfe; border-radius:10px; padding:10px 14px;}
+  .nowire .h{font-size:11.5px; font-weight:700; color:var(--plan); margin-bottom:7px;}
+  .nowire .row{display:flex; gap:8px; flex-wrap:wrap;}
+  .nowire .x{font-family:var(--mono); font-size:11px; color:var(--plan); background:#fff; border:1px dashed var(--plan-line); border-radius:6px; padding:4px 9px;}
+
+  /* L4 band */
+  .l4{background:var(--st-tint); border:1px solid var(--st-line); border-radius:13px; padding:14px 18px; margin-top:0;}
+  .l4 .lv{font-size:10.5px; font-weight:700; letter-spacing:.1em; color:var(--st); margin-bottom:9px;}
+  .l4 .proto{font-size:11.5px; color:#0c5e4d; margin-bottom:10px;} .l4 .proto .k{font-family:var(--mono);}
+  .ladder{display:flex; align-items:stretch; gap:0;}
+  .tier{flex:1; border-radius:9px; padding:9px 11px; text-align:center;}
+  .tier .tn{font-family:var(--mono); font-size:12px; font-weight:700;}
+  .tier .tb{font-size:10px; margin-top:3px;}
+  .tier.t1{border:1.5px solid var(--live);} .tier.t1 .tn{color:var(--live-deep);} .tier.t1 .tb{color:#3f8a60;}
+  .tier.t2{border:1.5px solid var(--slate-line); background:#fff;} .tier.t2 .tn{color:var(--slate);} .tier.t2 .tb{color:var(--muted);}
+  .tier.t3{border:1.5px dashed var(--plan-line); background:#fbfcfe;} .tier.t3 .tn{color:var(--plan);} .tier.t3 .tb{color:var(--plan);}
+  .tar{flex:0 0 22px; align-self:center; text-align:center; color:var(--st); font-size:13px;}
+  .l4 .cold{margin-top:10px; background:#fff; border:1.5px solid var(--st-line); border-radius:9px; padding:9px 13px; font-size:11.5px; color:#0c5e4d;}
+  .l4 .cold .k{font-family:var(--mono);}
+  .l4 .bstar{margin-top:9px; font-size:11px; color:#9a6a14; background:#fbf2e2; border:1px solid #f0dfba; border-radius:8px; padding:8px 12px;}
+  .l4 .bstar .k{font-family:var(--mono);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <h1><b>UnifiedKVManager</b> · CacheSeek 的 KV 心脏（L3）</h1>
+    <div class="sub">vLLM 风格 paged block + 内容寻址 hash 链；把续写 / 前缀分支 / 首块预热 / 嵌入复用压到同一组原语</div>
+  </div>
+
+  <div class="legend">
+    <span class="it"><span class="sw l1"></span>实时在跑（生产 lookup/save 路径会调到）</span>
+    <span class="it"><span class="sw l2"></span>已实现 · 单测覆盖 · 生产未接线（#4）</span>
+    <span class="it"><span class="sw l3"></span>仅设计（文档点名，代码尚无）</span>
+  </div>
+
+  <!-- L0 context -->
+  <div class="ctx l0">
+    <span class="lv">L0</span>
+    <span>lingbot attention（<span class="k">CausalWanSelfAttention</span>）—— 设计经 <span class="k">LayerKVHandle.append / read_window</span> 纯 store 访问；<b>Phase C 未接，现仍 pipeline 自管 KV dict</b></span>
+  </div>
+  <div class="vlink">▲ append / read_window　　▼ bind / finalize</div>
+
+  <!-- L2 context -->
+  <div class="ctx l2">
+    <span class="lv">L2</span>
+    <span class="strat">
+      <span class="stag">LingBotSelfKVStrategy</span><span class="stag">CrossAttnKV</span><span class="stag">EmbeddingCache</span>
+    </span>
+    <span style="margin-left:6px">命中判定 / 前缀前探 <b>今天直打 KVStore</b>（<span class="k">load_block_group</span>）；复用取 tensor 时才下沉到 manager ↓</span>
+  </div>
+  <div class="vlink mono">↓ get_tensor(key)　·　设计原语 allocate / lookup_chain / commit / touch（未接）</div>
+
+  <!-- L3 hero -->
+  <div class="hero">
+    <div class="bar"><span class="nm">L3 · UnifiedKVManager<span>kv_manager/manager.py</span></span><span class="tag">tier-aware KV coordinator</span></div>
+    <div class="inner">
+
+      <!-- live path -->
+      <div class="livepath">
+        <div class="h"><span class="dot"></span>实时主路径：<span class="fn">get_tensor(key)</span> — warm-through-cold restore <span style="font-weight:500; font-size:11px; color:#3f8a60;">（runtime_bridge 在 apply_resume 时逐层调）</span></div>
+        <div class="flow">
+          <div class="lp"><div class="b">warm 命中</div><div class="s">CpuConnector pinned tensor，免 disk + 免 torch.load</div></div>
+          <div class="lpar"></div>
+          <div class="lp"><div class="b">warm miss → cold</div><div class="s">KVStore bytes</div></div>
+          <div class="lpar"></div>
+          <div class="lp"><div class="b">反序列化</div><div class="s">deserialize_tensor</div></div>
+          <div class="lpar"></div>
+          <div class="lp"><div class="b">promote 进 warm</div><div class="s">下次同前缀 fanout 直接 warm 命中</div></div>
+        </div>
+        <div class="cap">stats <span class="k">{warm_hit · cold_hit · miss · promote}</span> —— 首次复原付 cold 填暖层，共享前缀的后续复原全走 warm（§6.6 经济学）</div>
+      </div>
+
+      <!-- component groups -->
+      <div class="grid">
+        <div class="grp g1">
+          <div class="gh"><span class="pin">实时</span>内容寻址 / 数据模型</div>
+          <div class="box t1"><div class="t">hash_keys</div><div class="d">build_self_kv_hash_chain · canonical_camera_hash · derive_sub_seed · block_hash_fn</div></div>
+          <div class="box t1"><div class="t">KVBlock · KVBlockChainPayload</div><div class="d">block 序列化 / partial-load spec</div></div>
+          <div class="box t2"><div class="t">BlockGroup · BlockHandle</div><div class="d">每 chunk = 40 层 block 一组</div></div>
+        </div>
+
+        <div class="grp g2">
+          <div class="gh"><span class="pin">已实现·未接</span>Spine 三件套</div>
+          <div class="box t2"><div class="t">BlockPool</div><div class="d">分层 slot（gpu/cpu/...）capacity / available</div></div>
+          <div class="box t2"><div class="t">BlockAllocator</div><div class="d">incref / decref / pin / touch / evict / select_victim</div></div>
+          <div class="box t2"><div class="t">PrefixIndex</div><div class="d">commit_chain / lookup_chain → PrefixMatch；__init__ 已构造，生产前缀前探暂绕过</div></div>
+        </div>
+
+        <div class="grp g2">
+          <div class="gh"><span class="pin">已实现·未接</span>容量 / 驱逐 / 安全</div>
+          <div class="box t2"><div class="t">victim_score</div><div class="d">kind-aware =(age×size)/(recompute_cost×reuse_breadth)，护住 cross_attn</div></div>
+          <div class="box t2"><div class="t">KVManagerConfig</div><div class="d">gpu_blocks cap · high_watermark · hard_cap_action · from_model_geometry</div></div>
+          <div class="box t2"><div class="t">OOM policy · SessionFinalizeReport</div><div class="d">self_kv fail-closed（拒复用走重算）/ embedding fail-open / 池满 503</div></div>
+        </div>
+      </div>
+
+      <!-- not wired -->
+      <div class="nowire">
+        <div class="h">仅设计 · session/handle lifecycle（#4，manager.py 尚无这些方法）</div>
+        <div class="row">
+          <span class="x">bind_session</span><span class="x">get_layer_handle</span>
+          <span class="x">plan_swap（SwapPlan chunk-aware 预测预取）</span><span class="x">fork（前缀分支）</span><span class="x">finalize_session</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="vlink mono">↓ put_block / get_block（byte-hash = sha256(key)）</div>
+
+  <!-- L4 -->
+  <div class="l4">
+    <div class="lv">L4 · KVConnector 后端（tier ladder）</div>
+    <div class="proto"><span class="k">KVConnector</span> Protocol：<span class="k">put_block · get_block · contains</span> —— 把现有 KVStore 包成 block-shaped API，<b>不重做存储</b></div>
+    <div class="ladder">
+      <div class="tier t3"><div class="tn">GpuConnector*</div><div class="tb">HBM ~3.35 TB/s</div></div>
+      <div class="tar">→</div>
+      <div class="tier t1"><div class="tn">CpuConnector</div><div class="tb">warm · pinned DRAM ~10–50 GB/s</div></div>
+      <div class="tar">→</div>
+      <div class="tier t2"><div class="tn">LocalFileConnector</div><div class="tb">disk ~0.5–3 GB/s</div></div>
+      <div class="tar">→</div>
+      <div class="tier t3"><div class="tn">FluxonConnector*</div><div class="tb">network</div></div>
+    </div>
+    <div class="cold">冷存底座 <b>cold KVStore</b>：<span class="k">Fluxon · local_file · memory</span>（manager 构造时传入 <span class="k">cold=kv_store, connectors=[CpuConnector()]</span>）</div>
+    <div class="bstar">★ 盈亏线 <span class="k">B* = V_kv / t_recompute ≈ 1 GB/s</span>（H100）：cold ~0.66 GB/s <b>打不过重算</b>，warm pinned 跨过 1–2 个数量级 → self-KV restore 才划算</div>
+  </div>
+
+</div>
+</body>
+</html>

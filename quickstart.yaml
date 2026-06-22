@@ -1,0 +1,66 @@
+# CacheSeek quickstart configuration.
+#
+# Pair with:
+#     from cacheseek import CacheService
+#     cache = CacheService.from_config("quickstart.yaml")
+#
+# Defaults below run a local-file KV + FAISS vector setup with the
+# encoder and reranker disabled — enough to wire the lifecycle end to
+# end without GPU or external services. Flip the commented blocks below
+# to plug real diffusion-side encoders (Qwen3-VL) and shared backends
+# (Fluxon, Qdrant) into your serving environment.
+
+# ─── Cache root ────────────────────────────────────────────────────
+enable_latent_cache: true
+cache_mode: read_write           # read_write | read_only | write_only
+latent_cache_dir: ./cache
+max_cache_size_gb: 10
+
+# ─── KV backend ────────────────────────────────────────────────────
+kv_store_type: local_file        # local_file | fluxon
+# fluxon_config_path: /path/to/fluxon_config.yaml
+
+# ─── Vector backend ────────────────────────────────────────────────
+vector_store_type: faiss         # faiss | qdrant
+faiss_index_dir: ./cache/faiss
+# qdrant_url: http://127.0.0.1:6333
+# qdrant_api_key: ~
+
+vector_dim: 2048                 # match the embedding model output
+
+# ─── Cache reuse strategy ──────────────────────────────────────────
+cache_strategy_type: video_approximate
+key_steps: [5, 10, 15, 20, 25]
+max_skip_step: 5                 # upper bound on how many steps a hit may skip
+lookup_mode: video
+video_vector_collection: video
+# Staircase skip-step: when rerank is on, skip depth is tiered by the rerank
+# score (higher score → deeper skip), still capped by max_skip_step + saved_steps.
+# Default table is the donor_drift ≤ 20% point from W05-0514-forced-K-sweep
+# (docs/动态阈值实验.md §7). Has no effect here (rerank_enabled: false below).
+# staircase_skip_enabled: false   # opt-in; flat max_skip_step skip by default
+# skip_step_tau_table: {3: 0.63, 7: 0.85, 11: 0.85, 14: 1.01}
+
+# ─── Encoder (off for the quickstart smoke; on for real serving) ───
+video_embedding_enabled: false
+# video_embedding_model_path: /path/to/Qwen3-VL-Embedding-2B
+# video_embedding_device_id: 0
+# text_embedding_model_path: /path/to/Qwen3-VL-Embedding-2B
+# text_embedding_device_id: 0
+
+# ─── Reranker (off for the quickstart smoke; on for tighter recall) ─
+rerank_enabled: false
+# rerank_model_path: /path/to/Qwen3-VL-Reranker-2B
+# rerank_device_id: 0
+# rerank_score_threshold: 0.80
+
+# ─── Save path ─────────────────────────────────────────────────────
+save_async_enabled: true
+save_queue_size: 8
+save_on_full: drop               # drop | sync | downgrade
+flush_on_shutdown: true
+
+# ─── Vector-update barrier ─────────────────────────────────────────
+vector_wait_poll_s: 0.05
+vector_wait_warn_s: 2.0
+vector_wait_timeout_s: 120.0
