@@ -20,7 +20,7 @@ Cross-request KV-cache middleware for world models — turn per-request cache in
   <a href="./README.zh.md">中文</a> | English
 </p>
 
-CacheSeek is a cache **middle-layer** between the inference engine and distributed storage that lifts cross-request reuse out of the inference loop into one swappable layer. It ships **two reuse families, for two model architectures** — lossy *approximate* reuse for diffusion video, and lossless *exact* reuse for autoregressive-diffusion world models — and connects upward to **[TeleFuser](https://github.com/Tele-AI/TeleFuser)** (inference) and downward to **Fluxon** (distributed storage), closing the *compute–cache–storage* loop.
+CacheSeek is a cache **middle-layer** between the inference engine and distributed storage that lifts cross-request reuse out of the inference loop into one swappable layer. It ships **two reuse families, for two model architectures** — lossy *approximate* reuse for diffusion video, and lossless *exact* reuse for autoregressive-diffusion world models — and is **open at both ends**: any inference framework above (via a swappable `FrameworkAdapter`) and any distributed KV/latent store below (Fluxon, Mooncake, Qdrant, local …), with **[TeleFuser](https://github.com/Tele-AI/TeleFuser)** and **Fluxon** as the reference integrations, closing the *compute–cache–storage* loop.
 
 ## Two reuse families
 
@@ -87,8 +87,8 @@ CacheSeek is a **cache middle-layer** between the inference framework and distri
 storage. Instead of treating KV cache as a per-request temporary product, it redefines
 it as a **continuable state snapshot** — collecting the scattered hidden states and
 scheduling indices behind one abstraction, with standardized **serialization, migration,
-and breakpoint-resume** interfaces. It connects upward to **TeleFuser** (our open-source
-world-model inference engine) and downward to **Fluxon** (distributed storage), so reuse,
+and breakpoint-resume** interfaces. It connects upward to inference frameworks (**TeleFuser** the reference engine)
+and downward to distributed storage (**Fluxon** by default), so reuse,
 retrieval, hit decisions, metadata, and policy live in one place — neither the engine
 above nor the storage below has to know how cross-request reuse is decided.
 
