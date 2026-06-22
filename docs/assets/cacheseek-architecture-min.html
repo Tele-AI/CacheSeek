@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CacheSeek 架构图 · 精简</title>
+<style>
+  :root{
+    --ink:#1b2230; --muted:#616a7c; --faint:#9aa3b4; --line:#e6e9f1; --bg:#f7f8fc;
+    --accent:#6d5cff; --accent-deep:#4733c9; --accent-tint:#f0eeff; --accent-line:#cfc8ff;
+    --slate-tint:#eef1f6; --slate-line:#dadfe9;
+    --la:#2f6bff; --la-tint:#eef4ff; --la-line:#cfe0ff;        /* 近似 */
+    --lb:#7a4dff; --lb-tint:#f2ecff; --lb-line:#daccff;        /* 续写 */
+    --st:#0e8f74; --st-tint:#e8f6f1; --st-line:#c4e8de;
+    --hit:#1f9d57; --hit-tint:#e9f6ef; --hit-line:#c2e6cf;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:48px 30px;
+    background:radial-gradient(1100px 380px at 50% -100px,#edefff 0%,rgba(237,239,255,0) 70%),var(--bg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Roboto,sans-serif;
+    color:var(--ink); -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1040px; margin:0 auto;}
+  .head{text-align:center; margin-bottom:26px;}
+  .head h1{margin:0; font-size:26px; letter-spacing:.3px;}
+  .head h1 b{color:var(--accent-deep);}
+  .head .sub{margin-top:9px; font-size:13.5px; color:var(--muted);}
+
+  /* framework / storage bands */
+  .band{display:flex; align-items:center; gap:16px; border-radius:14px; padding:16px 22px;}
+  .band .tag{font-size:10.5px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; opacity:.7;}
+  .band.fw{background:var(--slate-tint); border:1px solid var(--slate-line); color:#3b4660;}
+  .band.fw .tag{color:#6f7c98;}
+  .band.fw .lead{font-size:16px; font-weight:700;}
+  .band.fw .desc{font-size:13px; color:#56607a; margin-left:auto;}
+  .band.fw .desc b{color:#2f3c5c; font-weight:600;}
+
+  /* connector */
+  .link{display:flex; justify-content:center; align-items:center; gap:70px; height:42px;}
+  .link .l{font-family:var(--mono); font-size:11px; color:var(--muted); display:flex; flex-direction:column; align-items:center; gap:2px;}
+
+  /* hero */
+  .hero{background:#fff; border:2px solid var(--accent); border-radius:18px;
+        box-shadow:0 20px 44px -24px rgba(78,58,201,.55); overflow:hidden;}
+  .hero .bar{background:linear-gradient(90deg,var(--accent),#8d7eff); color:#fff;
+             padding:14px 24px; display:flex; align-items:baseline; gap:12px;}
+  .hero .bar .nm{font-size:18px; font-weight:800;}
+  .hero .bar .tl{font-size:12.5px; opacity:.9;}
+  .hero .inner{padding:22px 24px 24px;}
+
+  .row{display:flex; align-items:center; gap:16px; margin-bottom:14px;}
+  .chip{flex:0 0 122px; align-self:stretch; display:flex; flex-direction:column; justify-content:center;
+        color:#fff; border-radius:11px; padding:13px 14px; text-align:center;}
+  .chip .t{font-size:15px; font-weight:800;}
+  .chip .e{font-size:10.5px; opacity:.85; margin-top:3px; font-family:var(--mono);}
+  .row.a .chip{background:var(--la);} .row.b .chip{background:var(--lb);}
+
+  .cond{flex:1; border-radius:11px; padding:13px 16px;}
+  .row.a .cond{background:var(--la-tint); border:1px solid var(--la-line);}
+  .row.b .cond{background:var(--lb-tint); border:1px solid var(--lb-line);}
+  .cond .c1{font-size:14px; font-weight:700;}
+  .row.a .cond .c1{color:#184fb0;} .row.b .cond .c1{color:#5430c0;}
+  .cond .c2{font-size:11.5px; color:var(--muted); margin-top:4px;}
+
+  .arrow{flex:0 0 30px; position:relative; height:2px;}
+  .arrow::before{content:""; position:absolute; top:50%; left:0; right:9px; border-top:2px solid var(--hit-line);}
+  .arrow::after{content:""; position:absolute; top:50%; right:0; transform:translateY(-50%);
+                border-left:8px solid var(--hit); border-top:6px solid transparent; border-bottom:6px solid transparent;}
+
+  .act{flex:1.25; border-radius:11px; padding:13px 16px; background:var(--hit-tint); border:1px solid var(--hit-line); color:#11663a;}
+  .act .a1{font-size:14px; font-weight:800;}
+  .act .a2{font-size:11.5px; color:#2e8a59; margin-top:4px;}
+
+  .miss{margin-top:4px; text-align:center; font-size:12px; color:var(--faint);}
+  .miss b{color:var(--muted);}
+
+  /* storage */
+  .band.st{background:var(--st-tint); border:1px solid var(--st-line); color:#0c5e4d; padding:16px 22px;}
+  .band.st .tag{color:var(--st);}
+  .stgrid{flex:1; display:grid; grid-template-columns:repeat(4,1fr); gap:12px;}
+  .sc{background:#fff; border:1px solid var(--st-line); border-radius:11px; padding:11px 14px; text-align:center;}
+  .sc .h{font-size:13px; font-weight:700; color:#0c6553;}
+  .sc .d{font-size:10.5px; color:var(--muted); margin-top:4px;}
+
+  .foot{margin-top:18px; text-align:center; font-size:11.5px; color:var(--faint);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <h1><b>CacheSeek</b> · 跨请求 KV 缓存中间件</h1>
+    <div class="sub">夹在推理框架与存储后端之间 — 两条复用路径，框架 / 策略 / 后端皆可热插拔</div>
+  </div>
+
+  <!-- 推理框架 -->
+  <div class="band fw">
+    <span class="tag">Framework</span>
+    <span class="lead">推理框架</span>
+    <span class="desc">TeleFuser · <b>Wan2.2 video DiT</b> / <b>LingBot-Fast 世界模型</b></span>
+  </div>
+
+  <div class="link">
+    <span class="l">build_query 请求
+      <svg width="14" height="18"><line x1="7" y1="0" x2="7" y2="11" stroke="var(--accent)" stroke-width="2"/><polygon points="7,18 2,9 12,9" fill="var(--accent)"/></svg></span>
+    <span class="l">apply_resume 回填
+      <svg width="14" height="18"><line x1="7" y1="7" x2="7" y2="18" stroke="var(--st)" stroke-width="2"/><polygon points="7,0 2,9 12,9" fill="var(--st)"/></svg></span>
+  </div>
+
+  <!-- CacheSeek -->
+  <div class="hero">
+    <div class="bar"><span class="nm">CacheSeek</span><span class="tl">lookup() 查 · save() 存 — 检索 / 命中决策 / 复用</span></div>
+    <div class="inner">
+
+      <div class="row a">
+        <div class="chip"><div class="t">近似复用</div><div class="e">approximate</div></div>
+        <div class="cond"><div class="c1">embedding 相似命中</div><div class="c2">向量检索 + 重排，score ≥ 阈值（Wan2.2）</div></div>
+        <div class="arrow"></div>
+        <div class="act"><div class="a1">复用 latent，跳过早期 denoise 步</div><div class="a2">SkipStep(k)</div></div>
+      </div>
+
+      <div class="row b">
+        <div class="chip"><div class="t">续写续接</div><div class="e">continuation</div></div>
+        <div class="cond"><div class="c1">hash 链前缀精确命中</div><div class="c2">确定性键，最长已存前缀（LingBot self-KV）</div></div>
+        <div class="arrow"></div>
+        <div class="act"><div class="a1">恢复 self-KV（+Generator），从断点续写</div><div class="a2">ResumeKVChain · bit-for-bit</div></div>
+      </div>
+
+      <div class="miss">未命中 → <b>Passthrough</b>：原样交回框架走完整计算</div>
+    </div>
+  </div>
+
+  <div class="link" style="gap:0; height:38px;">
+    <svg width="14" height="20"><line x1="7" y1="0" x2="7" y2="13" stroke="var(--st)" stroke-width="2"/><polygon points="7,20 2,11 12,11" fill="var(--st)"/></svg>
+  </div>
+
+  <!-- 存储后端 -->
+  <div class="band st">
+    <span class="tag">Backends</span>
+    <div class="stgrid">
+      <div class="sc"><div class="h">KVStore</div><div class="d">Fluxon / 本地盘 · 分层</div></div>
+      <div class="sc"><div class="h">VectorStore</div><div class="d">FAISS / Qdrant</div></div>
+      <div class="sc"><div class="h">MetadataStore</div><div class="d">命中记录 / 键映射</div></div>
+      <div class="sc"><div class="h">AuditLog</div><div class="d">JSONL 审计</div></div>
+    </div>
+  </div>
+
+  <div class="foot">与 in-request cache（cache-dit / DeepCache / TeaCache）正交：它们省「单次推理内」重复算，CacheSeek 跨请求复用并持久化，可叠加。</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CacheSeek 架构图 · flow</title>
+<style>
+  :root{
+    --ink:#1b2230; --muted:#5d6678; --faint:#929bad; --line:#e4e8f0;
+    --bg:#f6f7fb; --card:#ffffff;
+    --accent:#6d5cff; --accent-deep:#4733c9; --accent-tint:#efedff; --accent-line:#cdc6ff;
+    --slate:#5a6478; --slate-tint:#eef1f6; --slate-line:#d8deea; --slate-ink:#3b4660;
+    /* lane A — approximate */
+    --la:#2f6bff; --la-deep:#184fb0; --la-tint:#eef4ff; --la-line:#cfe0ff;
+    /* lane B — continuation */
+    --lb:#7a4dff; --lb-deep:#5430c0; --lb-tint:#f1ecff; --lb-line:#d8ccff;
+    --st:#0e8f74; --st-tint:#e7f6f1; --st-line:#c2e8dd;
+    --hit:#1f9d57; --hit-tint:#e8f6ee; --hit-line:#bfe6cd;
+    --miss:#b4791b; --miss-tint:#fbf2e2; --miss-line:#f0dfba;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:36px 28px 38px; background:
+      radial-gradient(1200px 420px at 50% -120px, #eef0ff 0%, rgba(238,240,255,0) 70%), var(--bg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Roboto,sans-serif;
+    color:var(--ink); -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1380px; margin:0 auto;}
+
+  .head{text-align:center; margin-bottom:20px;}
+  .head h1{margin:0; font-size:25px; letter-spacing:.3px;}
+  .head h1 b{color:var(--accent-deep);}
+  .head .sub{margin-top:8px; font-size:13px; color:var(--muted);}
+  .pills{margin-top:12px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;}
+  .pill{font-size:11.5px; color:var(--accent-deep); background:var(--accent-tint);
+        border:1px solid var(--accent-line); border-radius:999px; padding:4px 12px; font-weight:600;}
+  .pill.ghost{color:var(--muted); background:#fff; border-color:var(--line); font-weight:500;}
+
+  /* zone bands */
+  .zone{display:flex; align-items:center; gap:14px; border-radius:13px; padding:13px 18px;}
+  .zone .tag{font-size:11px; font-weight:700; letter-spacing:.12em; text-transform:uppercase;
+             writing-mode:vertical-rl; transform:rotate(180deg); align-self:stretch;
+             display:flex; align-items:center; opacity:.85;}
+  .zone .body{flex:1; display:flex; align-items:center; gap:14px; flex-wrap:wrap;}
+  .zone .lead{font-size:15.5px; font-weight:700;}
+  .zone .lead small{display:block; font-weight:500; font-size:11.5px; opacity:.75; margin-top:2px;}
+
+  .zone.fw{background:var(--slate-tint); border:1px solid var(--slate-line); color:#36405a;}
+  .zone.fw .tag{color:#7785a3;}
+  .chipline{display:flex; gap:8px; flex-wrap:wrap;}
+  .runtime{font-size:12px; background:#fff; border:1px solid var(--slate-line); color:#3a4866;
+           border-radius:8px; padding:6px 11px;}
+  .runtime .k{font-family:var(--mono); font-size:11px; color:#7785a3;}
+  .planned{font-size:11px; color:var(--faint); font-style:italic;}
+
+  .vlink{display:flex; justify-content:center; align-items:center; gap:64px; height:38px;}
+  .vlink .seg{display:flex; flex-direction:column; align-items:center;}
+  .vlink .lab{font-family:var(--mono); font-size:10.5px; color:var(--muted); margin-bottom:1px;}
+
+  /* hero */
+  .hero{background:var(--card); border:2px solid var(--accent); border-radius:16px;
+        box-shadow:0 18px 40px -22px rgba(78,58,201,.5); overflow:hidden;}
+  .hero .bar{display:flex; align-items:center; justify-content:space-between;
+             padding:11px 18px; background:linear-gradient(90deg,var(--accent),#8a7bff); color:#fff;}
+  .hero .bar .name{font-size:16px; font-weight:800;}
+  .hero .bar .name span{font-weight:500; opacity:.85; font-size:12.5px; margin-left:8px;}
+  .hero .bar .ops{font-size:11.5px; opacity:.95; display:flex; gap:14px;}
+  .hero .bar .ops b{font-weight:700;}
+  .hero .inner{padding:15px 18px 17px;}
+
+  .adapter{display:flex; align-items:center; gap:12px; background:var(--accent-tint);
+           border:1px solid var(--accent-line); border-radius:10px; padding:8px 14px; margin-bottom:13px;}
+  .adapter .name{font-weight:700; font-size:13.5px; color:var(--accent-deep);}
+  .adapter .api{font-family:var(--mono); font-size:11.5px; color:#6256c0; display:flex; gap:10px; flex-wrap:wrap;}
+  .adapter .pkgs{margin-left:auto; font-size:11px; color:var(--muted);}
+  .adapter .pkgs code{font-family:var(--mono); background:#fff; border:1px solid var(--accent-line);
+                      border-radius:6px; padding:2px 6px; color:#5b50b8;}
+
+  .sechd{display:flex; align-items:baseline; gap:9px; margin:11px 2px 8px;}
+  .sechd .fn{font-family:var(--mono); font-size:13.5px; font-weight:700; color:var(--accent-deep);}
+  .sechd .zh{font-size:11.5px; color:var(--muted);}
+
+  /* lane */
+  .lane{border:1px solid var(--ln-line); border-left:4px solid var(--ln); border-radius:10px;
+        background:var(--ln-tint); padding:9px 12px; margin-bottom:9px;}
+  .lane.a{--ln:var(--la); --ln-deep:var(--la-deep); --ln-tint:var(--la-tint); --ln-line:var(--la-line);}
+  .lane.b{--ln:var(--lb); --ln-deep:var(--lb-deep); --ln-tint:var(--lb-tint); --ln-line:var(--lb-line);}
+  .lhd{display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap;}
+  .lchip{font-size:11.5px; font-weight:800; color:#fff; background:var(--ln); border-radius:6px; padding:3px 10px;}
+  .lzh{font-size:11px; color:var(--ln-deep);}
+  .lzh b{font-weight:700;}
+  .lnote{font-size:10.5px; color:var(--ln-deep); margin-top:7px; opacity:.9;}
+  .lnote .s{font-weight:700;}
+
+  .flow{display:flex; align-items:stretch; gap:0; flex-wrap:nowrap;}
+  .step{background:#fff; border:1.4px solid var(--ln-line); border-radius:9px; padding:8px 11px;
+        flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center;}
+  .step .s1{font-weight:700; font-size:12.3px;}
+  .step .s2{font-size:10px; color:var(--muted); margin-top:3px; font-family:var(--mono); line-height:1.35;}
+  .ar{flex:0 0 26px; align-self:center; position:relative; height:2px;}
+  .ar::before{content:""; position:absolute; top:50%; left:2px; right:8px; border-top:2px solid var(--ln-line);}
+  .ar::after{content:""; position:absolute; top:50%; right:1px; transform:translateY(-50%);
+             border-left:6px solid var(--ln-line); border-top:4.5px solid transparent; border-bottom:4.5px solid transparent;}
+  .ar.green::before{border-color:var(--hit-line);} .ar.green::after{border-left-color:var(--hit);}
+
+  .decide{background:#fff; border:1.6px solid var(--ln); border-radius:9px; padding:8px 11px; flex:1.15;
+          display:flex; flex-direction:column; justify-content:center;}
+  .decide .s1{font-weight:800; font-size:12.3px; color:var(--ln-deep);}
+  .decide .s2{font-size:10px; color:var(--ln-deep); margin-top:3px; font-family:var(--mono); line-height:1.35;}
+
+  .out{border-radius:9px; padding:8px 11px; flex:1.3; display:flex; flex-direction:column; justify-content:center;
+       background:var(--hit-tint); border:1.4px solid var(--hit-line); color:#11663a;}
+  .out .o1{font-weight:800; font-size:12.3px;}
+  .out .o2{font-size:10px; margin-top:3px; color:#2e8a59; line-height:1.4;}
+
+  /* miss row */
+  .missrow{display:flex; align-items:center; gap:10px; background:var(--miss-tint);
+           border:1px solid var(--miss-line); border-radius:9px; padding:8px 13px; margin:2px 0 4px;
+           font-size:11.5px; color:#7c5310;}
+  .missrow .mk{flex:0 0 30px; height:0; border-top:2px dashed var(--miss);}
+  .missrow b{font-weight:800;}
+
+  /* save grid */
+  .savegrid{display:grid; grid-template-columns:1fr 1fr; gap:9px;}
+  .lane.compact{margin-bottom:0; padding:9px 12px;}
+  .lane.compact .row{display:flex; align-items:center; gap:9px; font-size:11.5px; color:var(--ink);}
+  .lane.compact .row .seq{font-family:var(--mono); color:var(--ln-deep);}
+
+  .strat{margin-top:13px; padding-top:12px; border-top:1px dashed var(--line);
+         display:flex; align-items:center; gap:9px; flex-wrap:wrap;}
+  .strat .lbl{font-size:11px; font-weight:700; color:var(--muted);}
+  .stag{font-size:11px; background:#fff; border:1px solid var(--line); color:var(--muted); border-radius:7px; padding:4px 9px;}
+
+  .zone.st{background:var(--st-tint); border:1px solid var(--st-line); color:#0c5e4d; padding:13px 18px; margin-top:0;}
+  .zone.st .tag{color:var(--st);}
+  .stgrid{flex:1; display:grid; grid-template-columns:1.55fr 1fr 1fr 1fr; gap:11px;}
+  .scard{background:#fff; border:1px solid var(--st-line); border-radius:11px; padding:10px 13px;}
+  .scard .h{font-weight:700; font-size:12.8px; color:#0c6553;}
+  .scard .d{font-size:10.8px; color:var(--muted); margin-top:5px; line-height:1.5;}
+  .scard .d code{font-family:var(--mono); font-size:10px; color:#1d7a64;}
+  .ladder{margin-top:8px;}
+  .ladder .bars{display:flex; height:15px; border-radius:5px; overflow:hidden; border:1px solid var(--st-line);}
+  .ladder .b{flex:1; display:flex; align-items:center; justify-content:center; font-size:8.5px; font-family:var(--mono); color:#0a4d40;}
+  .ladder .b.gpu{background:#bff0e2;} .ladder .b.cpu{background:#d7f3ea;}
+  .ladder .b.lf{background:#eef8f4;} .ladder .b.fx{background:#f6fbf9;}
+  .ladder .scale{display:flex; justify-content:space-between; font-size:8.5px; color:var(--faint); margin-top:3px; font-family:var(--mono);}
+  .ladder .bstar{font-size:9px; color:var(--miss); margin-top:3px; text-align:center;}
+
+  .foot{margin-top:16px; text-align:center; font-size:11.5px; color:var(--faint);}
+  .foot b{color:var(--muted);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <h1><b>CacheSeek</b> — 跨请求 KV 缓存中间件</h1>
+    <div class="sub">夹在推理框架与存储后端之间 · 独占 复用 / 检索 / 命中决策 / 元数据 / 策略逻辑</div>
+    <div class="pills">
+      <span class="pill">Protocol-driven</span>
+      <span class="pill">框架 · 策略 · KV后端 · 向量后端 可热插拔</span>
+      <span class="pill ghost">持久化跨进程重启</span>
+      <span class="pill ghost">与 in-request cache 正交可叠加</span>
+    </div>
+  </div>
+
+  <!-- 上：推理框架 -->
+  <div class="zone fw">
+    <div class="tag">Framework</div>
+    <div class="body">
+      <div class="lead">推理框架<small>Inference Framework</small></div>
+      <div class="chipline">
+        <div class="runtime">TeleFuser · Wan2.2 video DiT <span class="k">→ adapters/telefuser</span></div>
+        <div class="runtime">TeleFuser · LingBot-Fast 世界模型 <span class="k">→ adapters/lingbot_fast</span></div>
+      </div>
+      <div class="planned">planned: vLLM-Omni · SGLang-Diffusion</div>
+    </div>
+  </div>
+
+  <div class="vlink">
+    <div class="seg"><span class="lab">build_query ▸ 请求</span>
+      <svg width="16" height="20"><line x1="8" y1="0" x2="8" y2="13" stroke="var(--accent)" stroke-width="2"/><polygon points="8,20 3,11 13,11" fill="var(--accent)"/></svg></div>
+    <div class="seg"><span class="lab">apply_resume / on_response ◂ 回填</span>
+      <svg width="16" height="20"><line x1="8" y1="7" x2="8" y2="20" stroke="var(--st)" stroke-width="2"/><polygon points="8,0 3,9 13,9" fill="var(--st)"/></svg></div>
+  </div>
+
+  <!-- 中：CacheSeek -->
+  <div class="hero">
+    <div class="bar">
+      <div class="name">CacheSeek<span>core/lifecycle.py · CacheService 异步编排</span></div>
+      <div class="ops"><span><b>lookup()</b> 查</span><span><b>save()</b> 存</span><span>AuditLog 审计</span></div>
+    </div>
+    <div class="inner">
+
+      <div class="adapter">
+        <div class="name">FrameworkAdapter</div>
+        <div class="api"><span>build_query()</span><span>apply_resume()</span><span>on_response()</span></div>
+        <div class="pkgs">按 ResumeHint 子类 <code>singledispatch</code> 分发 · <code>adapters/telefuser</code> · <code>adapters/lingbot_fast</code></div>
+      </div>
+
+      <!-- ===== lookup ===== -->
+      <div class="sechd"><span class="fn">lookup()</span><span class="zh">两类检索机制并行 —— 按 embedding 相似命中 vs 按 hash 链精确续接</span></div>
+
+      <!-- lane A: approximate -->
+      <div class="lane a">
+        <div class="lhd"><span class="lchip">近似复用</span>
+          <span class="lzh">VideoBasedApproximateCache · Wan2.2 — 键=<b>embedding(模糊)</b> · 命中=<b>相似度阈值</b></span></div>
+        <div class="flow">
+          <div class="step"><div class="s1">编码 Encode</div><div class="s2">Qwen3-VL embed</div></div>
+          <div class="ar"></div>
+          <div class="step"><div class="s1">向量检索</div><div class="s2">VectorStore top-k</div></div>
+          <div class="ar"></div>
+          <div class="step"><div class="s1">重排 Rerank</div><div class="s2">Qwen3-VL reranker</div></div>
+          <div class="ar"></div>
+          <div class="decide"><div class="s1">命中? Hit</div><div class="s2">score ≥ threshold</div></div>
+          <div class="ar green"></div>
+          <div class="out"><div class="o1">→ SkipStep(k)</div><div class="o2">复用 cached latent，跳过前 k 步 denoise</div></div>
+        </div>
+      </div>
+
+      <!-- lane B: continuation -->
+      <div class="lane b">
+        <div class="lhd"><span class="lchip">续写 / 精确续接</span>
+          <span class="lzh">LingBot-Fast self-KV / cross-attn — 键=<b>确定性 hash 链</b>(image·prompt·seed·action·camera) · 命中=<b>前缀精确(score 1.0)</b></span></div>
+        <div class="flow">
+          <div class="step"><div class="s1">构 hash 链</div><div class="s2">build_self_kv_hash_chain</div></div>
+          <div class="ar"></div>
+          <div class="step"><div class="s1">前缀前探 Prefix probe</div><div class="s2">prefix_index · 最长已存前缀 K</div></div>
+          <div class="ar"></div>
+          <div class="decide"><div class="s1">命中 → ResumeHint</div><div class="s2">ResumeKVChain / ReuseCrossAttnKV / ReuseEmbedding</div></div>
+          <div class="ar green"></div>
+          <div class="out"><div class="o1">→ 恢复 chunk 0..K-1 self-KV</div><div class="o2">连 <b>Generator state</b> 一起恢复，从第 K 个 chunk 续写（bit-for-bit）</div></div>
+        </div>
+        <div class="lnote"><span class="s">三形态(同一机制)：</span>续写 — B 接在 A 之后 ｜ 分叉 — B 在 chunk k 处岔开 ｜ 预热 — 只暖 chunk 0 供任意请求复用</div>
+      </div>
+
+      <div class="missrow"><span class="mk"></span><span>两路均未命中 → <b>Passthrough</b>：原样交回框架走完整计算（graceful degrade；UnsupportedResumeHint 亦回落至此）</span></div>
+
+      <!-- ===== save ===== -->
+      <div class="sechd"><span class="fn">save()</span><span class="zh">两类落盘形态 —— 整段快照 vs 增量逐 chunk 追加</span></div>
+      <div class="savegrid">
+        <div class="lane a compact">
+          <div class="lhd"><span class="lchip">近似</span><span class="lzh">whole-latent checkpoint</span></div>
+          <div class="row"><span class="seq">collect outputs → 在 key_steps 检查点整段 dump latent → 持久化 KV + 建向量索引 + 写元数据</span></div>
+        </div>
+        <div class="lane b compact">
+          <div class="lhd"><span class="lchip">续写</span><span class="lzh">incremental per-chunk</span></div>
+          <div class="row"><span class="seq">逐 chunk 存 self-KV slice(+Generator) / per-prompt cross-attn group → 仅追加未存切片，不重 dump</span></div>
+        </div>
+      </div>
+
+      <div class="strat">
+        <span class="lbl">画像 Profile</span>
+        <span class="stag">diffusion-video</span><span class="stag">lingbot-fast</span>
+        <span class="lbl" style="margin-left:14px">容量</span>
+        <span class="stag">Eviction (victim_score)</span>
+        <span class="lbl" style="margin-left:auto">预留策略</span>
+        <span class="stag">NIRVANA / ReDi / ReCon / Chorus · exact-hash</span>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="vlink" style="gap:0;">
+    <svg width="16" height="22"><line x1="8" y1="0" x2="8" y2="15" stroke="var(--st)" stroke-width="2"/><polygon points="8,22 3,13 13,13" fill="var(--st)"/></svg>
+  </div>
+
+  <!-- 下：存储后端 -->
+  <div class="zone st">
+    <div class="tag">Backends</div>
+    <div class="stgrid">
+      <div class="scard">
+        <div class="h">KVStore + UnifiedKVManager</div>
+        <div class="d"><code>fluxon · local_file · memory</code> · block_pool / allocator / prefix_index / <code>KVConnector</code> 分层</div>
+        <div class="ladder">
+          <div class="bars"><div class="b gpu">gpu HBM</div><div class="b cpu">cpu DRAM</div><div class="b lf">local_file</div><div class="b fx">fluxon</div></div>
+          <div class="scale"><span>~3.35 TB/s</span><span>~10–50 GB/s</span><span>~0.5–3 GB/s</span><span>network</span></div>
+          <div class="bstar">↑ 越靠左越快 · 须越过盈亏线 B* = V_kv / t_recompute（≈1 GB/s @ H100）续写才划算</div>
+        </div>
+      </div>
+      <div class="scard"><div class="h">VectorStore</div><div class="d">FAISS（本地）<br>Qdrant（服务部署）<br><code>backends/vector</code></div></div>
+      <div class="scard"><div class="h">MetadataStore</div><div class="d">LocalCacheMetadataManager<br>命中记录 / 键映射<br><code>backends/metadata</code></div></div>
+      <div class="scard"><div class="h">AuditLog</div><div class="d">JSONL 追加写<br>log_monitor 实时监控<br><code>backends/audit</code></div></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <b>与 in-request cache 正交：</b>cache-dit / DeepCache / TGate / TeaCache 在「单次 denoise 内」省重复算；CacheSeek 在「跨独立请求」复用并持久化 — 近似命中跳早期步、续写精确续接 KV 链，两者可叠加。
+  </div>
+
+</div>
+</body>
+</html>

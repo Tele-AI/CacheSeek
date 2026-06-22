@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cacheseek"
+version = "0.1.0a1"
+description = "Cross-request KV-cache middleware for world-model long-horizon reasoning — session continuation, prefix-tree reuse, and approximate cross-request reuse between TeleFuser and Fluxon"
+requires-python = ">=3.10"
+authors = [{name = "TeleAI"}]
+license = {text = "Apache-2.0"}
+readme = "README.md"
+keywords = ["cache", "kv-cache", "world-model", "session-continuation", "prefix-cache", "approximate-caching", "diffusion", "inference", "fluxon", "telefuser"]
+
+dependencies = [
+    "loguru>=0.7",
+    "numpy>=1.23",
+    "Pillow>=10",
+    "PyYAML>=6.0",
+    "torch>=2.0",
+]
+
+[project.optional-dependencies]
+# Pluggable backends — kept optional so `import cacheseek` stays light and a
+# bare install doesn't pull heavy deps. Heavy modules load lazily on first use.
+qdrant = ["qdrant-client>=1.7"]                       # vector store backend
+faiss = ["faiss-cpu>=1.7"]                            # vector store backend
+encoder = ["transformers>=4.57", "accelerate>=0.30", "qwen-vl-utils", "scipy", "sentencepiece"]  # Qwen3-VL embed/rerank backend (qwen_vl_utils->vision_process, scipy->reranker softmax, sentencepiece->Qwen tokenizer)
+dev = ["pytest>=7", "pytest-asyncio>=0.21", "ruff", "pyright", "httpx>=0.27"]
+# Everything needed to run the full reference path (all backends).
+all = ["cacheseek[qdrant,faiss,encoder]"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cacheseek*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "smoke: fast import/config/script checks that validate local package wiring",
+    "e2e: end-to-end lifecycle checks; external variants may require opt-in infrastructure",
+]

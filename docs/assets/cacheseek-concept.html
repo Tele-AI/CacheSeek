@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CacheSeek 理念示意图</title>
+<style>
+  :root{
+    --ink:#1b2230; --muted:#5d6678; --faint:#98a1b2; --line:#e4e8f0; --bg:#f6f7fb;
+    --accent:#6d5cff; --accent-deep:#4733c9; --accent-tint:#f0eeff; --accent-line:#cdc6ff;
+    --live:#1f9d57; --live-tint:#e9f6ef; --live-line:#bfe3cd; --live-deep:#11663a;
+    --gray:#8a93a4; --gray-tint:#f1f3f7; --gray-line:#dde2ec;
+    --bad:#c2613a; --bad-tint:#fbeee7; --bad-line:#f0d6c7;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; padding:40px 28px 44px;
+    background:radial-gradient(1200px 420px at 50% -120px,#edefff 0%,rgba(237,239,255,0) 70%),var(--bg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Roboto,sans-serif;
+    color:var(--ink); -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1240px; margin:0 auto;}
+  .mono{font-family:var(--mono);}
+
+  .head{text-align:center; margin-bottom:24px;}
+  .head h1{margin:0; font-size:25px;} .head h1 b{color:var(--accent-deep);}
+  .head .thesis{margin-top:11px; font-size:14px; color:var(--muted); line-height:1.6;}
+  .head .thesis b{color:var(--ink);}
+  .head .thesis .hl{color:var(--accent-deep); font-weight:700;}
+
+  /* VS two-column */
+  .vs{display:grid; grid-template-columns:1fr 56px 1fr; align-items:stretch; gap:0; margin-bottom:18px;}
+  .col{border-radius:15px; padding:16px 18px;}
+  .col .ch{display:flex; align-items:baseline; gap:9px; margin-bottom:4px;}
+  .col .ch .t{font-size:16px; font-weight:800;}
+  .col .ch .tag{font-size:11.5px; font-weight:600;}
+  .col .csub{font-size:11px; margin-bottom:13px;}
+
+  .col.old{background:var(--gray-tint); border:1px solid var(--gray-line);}
+  .col.old .ch .t{color:#4a5healed;} .col.old .ch .t{color:#5a6478;} .col.old .ch .tag{color:var(--gray);} .col.old .csub{color:var(--faint);}
+  .col.new{background:var(--accent-tint); border:1.5px solid var(--accent-line);}
+  .col.new .ch .t{color:var(--accent-deep);} .col.new .ch .tag{color:var(--accent);} .col.new .csub{color:#6256c0;}
+
+  /* old: isolated pipelines */
+  .pipe{display:flex; align-items:center; gap:7px; background:#fff; border:1.4px solid var(--gray-line); border-radius:9px; padding:8px 11px; margin-bottom:8px;}
+  .pipe .rq{font-family:var(--mono); font-size:10.5px; color:var(--gray); flex:0 0 38px;}
+  .pipe .st{flex:1; font-size:11px; color:#6b7healed; color:#69728a; text-align:center; border-radius:6px; padding:4px 0; background:var(--gray-tint);}
+  .pipe .ar{color:var(--gray); font-size:11px;}
+  .pipe .dump{flex:0 0 auto; font-size:10.5px; color:var(--bad); background:var(--bad-tint); border:1px dashed var(--bad-line); border-radius:6px; padding:4px 8px;}
+
+  /* new: converge to snapshot store */
+  .converge{display:flex; align-items:stretch; gap:10px;}
+  .reqs{flex:0 0 70px; display:flex; flex-direction:column; gap:7px; justify-content:center;}
+  .reqs .rq{font-family:var(--mono); font-size:10.5px; color:var(--accent-deep); background:#fff; border:1.3px solid var(--accent-line); border-radius:7px; padding:6px 4px; text-align:center;}
+  .conn{flex:0 0 26px; align-self:center; position:relative;}
+  .conn svg{display:block;}
+  .store{flex:1; background:#fff; border:1.6px solid var(--accent); border-radius:11px; padding:11px 13px; display:flex; flex-direction:column; justify-content:center;}
+  .store .sh{font-size:13px; font-weight:800; color:var(--accent-deep);}
+  .store .sd{font-size:10.5px; color:#6256c0; margin-top:4px; line-height:1.45;}
+  .store .cont{margin-top:9px; display:flex; align-items:center; gap:8px; background:var(--live-tint); border:1px solid var(--live-line); border-radius:8px; padding:6px 10px;}
+  .store .cont .lab{font-size:11px; font-weight:700; color:var(--live-deep);}
+  .store .cont .arw{color:var(--live); font-weight:800;}
+
+  .tags{display:flex; gap:7px; margin-top:13px; flex-wrap:wrap;}
+  .tg{font-size:11px; border-radius:7px; padding:4px 10px; font-weight:600;}
+  .tg.bad{color:var(--bad); background:var(--bad-tint); border:1px solid var(--bad-line);}
+  .tg.good{color:var(--live-deep); background:var(--live-tint); border:1px solid var(--live-line);}
+
+  /* center pivot */
+  .pivot{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;}
+  .pivot .badge{writing-mode:vertical-rl; font-size:11px; font-weight:800; color:var(--accent-deep); letter-spacing:.18em;}
+  .pivot .arw{color:var(--accent); font-size:20px;}
+
+  /* abstraction layer detail */
+  .layer{background:#fff; border:2px solid var(--accent); border-radius:16px; box-shadow:0 18px 40px -24px rgba(78,58,201,.5); overflow:hidden;}
+  .layer .bar{background:linear-gradient(90deg,var(--accent),#8d7eff); color:#fff; padding:12px 20px;}
+  .layer .bar .nm{font-size:16px; font-weight:800;}
+  .layer .bar .sub{font-size:12px; opacity:.92; margin-top:2px;}
+  .layer .inner{padding:16px 18px 18px;}
+
+  .idx{display:flex; align-items:center; gap:10px; background:var(--accent-tint); border:1px solid var(--accent-line); border-radius:10px; padding:9px 14px; margin-bottom:14px; font-size:12px; color:var(--accent-deep);}
+  .idx b{font-weight:800;} .idx .k{font-family:var(--mono); font-size:11px; color:#6256c0;}
+
+  .ifaces{display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;}
+  .iface{border:1.4px solid var(--accent-line); border-radius:11px; padding:12px 14px; background:#fbfaff;}
+  .iface .ih{font-size:13.5px; font-weight:800; color:var(--accent-deep); display:flex; align-items:center; gap:7px;}
+  .iface .ih .no{font-size:10px; background:var(--accent); color:#fff; border-radius:50%; width:18px; height:18px; display:flex; align-items:center; justify-content:center; font-weight:700;}
+  .iface .id{font-size:11px; color:var(--muted); margin-top:7px; line-height:1.5;}
+  .iface .code{font-family:var(--mono); font-size:10.5px; color:#5b50b8; background:#fff; border:1px solid var(--accent-line); border-radius:6px; padding:5px 8px; margin-top:8px; display:block; line-height:1.5;}
+
+  /* capabilities footer */
+  .caps{margin-top:14px; padding-top:14px; border-top:1px dashed var(--line); display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
+  .caps .lbl{font-size:12px; font-weight:800; color:var(--live-deep);}
+  .cap{font-size:11.5px; color:var(--live-deep); background:var(--live-tint); border:1px solid var(--live-line); border-radius:8px; padding:5px 11px; font-weight:600;}
+  .payoff{margin-left:auto; font-size:11.5px; color:#9a6a14; background:#fbf2e2; border:1px solid #f0dfba; border-radius:8px; padding:6px 12px;}
+  .payoff b{color:#7c5310;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <h1><b>CacheSeek</b> · 把 KV Cache 从「一次性产物」重定义为「可延续的状态快照」</h1>
+    <div class="thesis">
+      世界模型需要<b>持续推演</b>,可传统范式把每次交互当一条<b>独立流水线</b> —— 反复重建历史 = 算力浪费 + 状态断裂。<br>
+      CacheSeek 用<span class="hl">独立抽象管理层</span>把分散的隐状态与调度索引集中收口,让模型本就具备的<span class="hl">跨会话续写能力</span>得以显现。
+    </div>
+  </div>
+
+  <!-- VS -->
+  <div class="vs">
+    <!-- old -->
+    <div class="col old">
+      <div class="ch"><span class="t">传统推理范式</span><span class="tag">每次交互 = 独立流水线</span></div>
+      <div class="csub">KV Cache 内联在推理流水线里读写,与之深度耦合 —— 用完即弃,无法跨请求调度、跨会话延续</div>
+      <div class="pipe"><span class="rq">req 1</span><span class="st">重建历史上下文</span><span class="ar">→</span><span class="st">推理生成</span><span class="ar">→</span><span class="dump">🗑 KV 即弃</span></div>
+      <div class="pipe"><span class="rq">req 2</span><span class="st">重建历史上下文</span><span class="ar">→</span><span class="st">推理生成</span><span class="ar">→</span><span class="dump">🗑 KV 即弃</span></div>
+      <div class="pipe"><span class="rq">req 3</span><span class="st">重建历史上下文</span><span class="ar">→</span><span class="st">推理生成</span><span class="ar">→</span><span class="dump">🗑 KV 即弃</span></div>
+      <div class="tags">
+        <span class="tg bad">✗ 反复重建历史</span><span class="tg bad">✗ 算力持续浪费</span><span class="tg bad">✗ 状态反复断裂</span>
+      </div>
+    </div>
+
+    <!-- pivot -->
+    <div class="pivot">
+      <span class="arw">⟹</span>
+      <span class="badge">CacheSeek 介入</span>
+      <span class="arw">⟹</span>
+    </div>
+
+    <!-- new -->
+    <div class="col new">
+      <div class="ch"><span class="t">CacheSeek 范式</span><span class="tag">KV = 可延续状态快照</span></div>
+      <div class="csub">隐状态从流水线中解耦、收口进统一管理层,可序列化、可迁移、可断点恢复</div>
+      <div class="converge">
+        <div class="reqs"><span class="rq">req 1</span><span class="rq">req 2</span><span class="rq">req 3</span></div>
+        <div class="conn"><svg width="26" height="120">
+          <path d="M2,18 C16,18 12,60 24,60" stroke="#9b8bff" stroke-width="2" fill="none"/>
+          <path d="M2,60 C16,60 12,60 24,60" stroke="#9b8bff" stroke-width="2" fill="none"/>
+          <path d="M2,102 C16,102 12,60 24,60" stroke="#9b8bff" stroke-width="2" fill="none"/>
+          <polygon points="24,60 17,56 17,64" fill="#9b8bff"/>
+        </svg></div>
+        <div class="store">
+          <div class="sh">状态快照库 · 抽象管理层</div>
+          <div class="sd">分散隐状态(self-KV / cross-attn / 嵌入)+ 内容寻址调度索引,集中收口</div>
+          <div class="cont"><span class="lab">跨会话续写</span><span class="arw arw">→→</span><span class="lab">从断点接着推演,只算新增片段</span></div>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tg good">✓ 隐状态收口</span><span class="tg good">✓ 跨请求复用</span><span class="tg good">✓ 跨会话续写</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- abstraction layer detail -->
+  <div class="layer">
+    <div class="bar"><div class="nm">独立抽象管理层 —— 把"潜在能力"变成"可调用接口"</div>
+      <div class="sub">现有自回归架构已具跨片段状态复用潜质,但上下文耦合在流水线里;CacheSeek 提供标准化接口让它显现</div></div>
+    <div class="inner">
+
+      <div class="idx">
+        <b>调度索引(收口的关键)：</b>内容寻址 <span class="k">hash 链</span> —— 同初始条件 + 动作/相机序列派生确定性 key
+        <span class="k">build_self_kv_hash_chain</span> · 前缀前探 <span class="k">PrefixIndex / lookup_chain</span>
+      </div>
+
+      <div class="ifaces">
+        <div class="iface">
+          <div class="ih"><span class="no">1</span>标准化序列化</div>
+          <div class="id">把隐状态打包成可落盘、可寻址的快照,而非进程内临时张量</div>
+          <code class="code">KVBlockChainPayload<br>Payload.serialize_tensor · to_kv_entries</code>
+        </div>
+        <div class="iface">
+          <div class="ih"><span class="no">2</span>状态迁移(分层)</div>
+          <div class="id">快照在 tier 间搬运:暖层 pinned DRAM ↔ 冷存磁盘 / 分布式</div>
+          <code class="code">KVConnector tier ladder<br>gpu → cpu → local_file → fluxon</code>
+        </div>
+        <div class="iface">
+          <div class="ih"><span class="no">3</span>断点恢复</div>
+          <div class="id">命中前缀 → 取回快照 → 从断点续写,连 Generator 状态一并复原</div>
+          <code class="code">ResumeKVChain · get_tensor(warm-through-cold)<br>apply_resume</code>
+        </div>
+      </div>
+
+      <div class="caps">
+        <span class="lbl">显现的能力</span>
+        <span class="cap">跨会话续写</span><span class="cap">前缀分支共享</span><span class="cap">首块预热</span><span class="cap">输入嵌入复用</span>
+        <span class="payoff"><b>算力用在刀刃上：</b>跳过已算前缀,只算分叉/新增片段（首块预热实测 ≈ 8.8× 更快）</span>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

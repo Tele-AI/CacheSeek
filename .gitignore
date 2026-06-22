@@ -1,0 +1,101 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+*.dylib
+
+# Distribution / packaging
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test, lint, and type-check caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and runtime output
+*.log
+/logs/
+/run/
+/runs/
+/outputs/
+/tmp/
+/temp/
+
+# CacheSeek / model runtime artifacts
+/.cache/
+/cache/
+/checkpoints/
+/models/
+*.jsonl.tmp
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Personal study notes (not part of the project)
+/notes/
+
+# In-progress architecture walkthroughs (local only, not pushed)
+/docs/architecture/
+
+# Internal review notes (local only, not pushed)
+/docs/INITIAL_COMMIT_REVIEW.md
+
+# Internal evaluation notes (local only, not pushed)
+/docs/EVALUATION.md
+
+# Internal batch-experiment / reproduce runbook (local only, not pushed)
+/docs/REPRODUCE_wan22_approx_reuse.zh.md
+
+# Experiment video artifacts (kept on remote, not in git)
+*.mp4
+
+# Ad-hoc uv lock from local test runs (project uses setuptools)
+uv.lock
+
+# local working notes (not for public)
+temp/
+
+# internal contributor guide (not for public)
+CLAUDE.md
