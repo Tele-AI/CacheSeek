@@ -1,9 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
+"""Qdrant-backed VectorStore (for service deployments with shared collections)."""
+
 from __future__ import annotations
 
 import hashlib
 import os
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -42,7 +46,7 @@ class QdrantVectorStore:
     def __init__(
         self,
         url: str = "",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         prefer_grpc: bool = False,
         timeout: int = 30,
         distance: str = "COSINE",
@@ -58,11 +62,11 @@ class QdrantVectorStore:
         self._client: Any = None
         # Track per-collection dim to validate upsert / search inputs fast,
         # cheaper than round-tripping to Qdrant.
-        self._dims: Dict[str, int] = {}
+        self._dims: dict[str, int] = {}
         # Stable string-cache-id <-> point UUID map. Qdrant point IDs must be
         # int or UUID. We keep both directions so delete() can translate the
         # caller's cache_id back to the underlying point id.
-        self._id_map: Dict[str, Dict[str, str]] = {}
+        self._id_map: dict[str, dict[str, str]] = {}
 
         logger.debug(
             "QdrantVectorStore init url={} in_memory={} distance={}",
@@ -74,10 +78,24 @@ class QdrantVectorStore:
     def search(
         self,
         collection: str,
-        vector: List[float],
+        vector: list[float],
         limit: int = 1,
-        score_threshold: Optional[float] = None,
-    ) -> List[VectorSearchResult]:
+        score_threshold: float | None = None,
+    ) -> list[VectorSearchResult]:
+        """Return up to ``limit`` nearest payloads for ``vector`` in ``collection``.
+
+        Prefers the newer ``query_points`` API, falling back to ``search`` for
+        older clients. A missing collection is treated as an empty result (to
+        match FAISS), but other backend failures are re-raised. The Qdrant
+        cosine ``score`` is used directly as ``similarity``; the caller's
+        ``cache_id`` is recovered from the payload, the in-memory reverse map,
+        or finally the raw point id.
+
+        Raises:
+            ValueError: If ``vector`` length does not match the cached dimension
+                for ``collection``.
+            RuntimeError: On a backend error other than collection-not-found.
+        """
         client = self._get_client()
         known_dim = self._dims.get(collection)
         if known_dim is not None and len(vector) != known_dim:
@@ -130,7 +148,7 @@ class QdrantVectorStore:
                 f"collection={collection} err_type={type(exc).__name__} err={exc}"
             ) from exc
 
-        results: List[VectorSearchResult] = []
+        results: list[VectorSearchResult] = []
         id_to_cache = self._id_map.setdefault(collection, {})
         for p in points or []:
             payload = dict(getattr(p, "payload", None) or {})
@@ -159,9 +177,21 @@ class QdrantVectorStore:
         self,
         collection: str,
         point_id: str,
-        vector: List[float],
-        payload: Dict[str, Any],
+        vector: list[float],
+        payload: dict[str, Any],
     ) -> None:
+        """Insert or replace ``point_id`` with ``vector`` and ``payload``.
+
+        Auto-creates the collection (inferring the dimension from ``vector``) if
+        it is unknown. The string ``point_id`` is mapped to a deterministic
+        Qdrant point UUID, so re-upserting the same ``point_id`` overwrites the
+        point. ``cache_id`` is mirrored into the payload so ``search`` can
+        recover it after a restart loses the in-memory id map.
+
+        Raises:
+            ValueError: If ``vector`` length does not match the collection dim.
+            RuntimeError: On a backend upsert failure.
+        """
         client = self._get_client()
         qmodels = self._qdrant_models()
 
@@ -213,7 +243,15 @@ class QdrantVectorStore:
 
         self._id_map.setdefault(collection, {})[str(qid)] = str(point_id)
 
-    def delete(self, collection: str, point_ids: List[str]) -> None:
+    def delete(self, collection: str, point_ids: list[str]) -> None:
+        """Remove the given point ids from ``collection`` and the local id map.
+
+        Each string id is translated to its derived Qdrant point UUID. A missing
+        collection is a no-op (to match FAISS); other failures are re-raised.
+
+        Raises:
+            RuntimeError: On a backend delete failure other than not-found.
+        """
         if not point_ids:
             return
         client = self._get_client()
@@ -247,11 +285,21 @@ class QdrantVectorStore:
 
         id_map = self._id_map.get(collection)
         if id_map:
-            for pid, qid in zip(point_ids, qids):
+            for pid, qid in zip(point_ids, qids, strict=False):
                 id_map.pop(str(qid), None)
                 id_map.pop(str(pid), None)
 
     def ensure_collection(self, collection: str, vector_dim: int) -> None:
+        """Create the collection with the configured distance metric if absent.
+
+        If it already exists, only syncs the cached dimension (probed from the
+        server, falling back to ``vector_dim``) so later upsert/search
+        validation has a reference. Tolerates older clients that lack
+        ``collection_exists`` by falling back to ``get_collection``.
+
+        Raises:
+            RuntimeError: If the existence check or collection creation fails.
+        """
         client = self._get_client()
         qmodels = self._qdrant_models()
         vector_dim = int(vector_dim)
@@ -334,7 +382,12 @@ class QdrantVectorStore:
         self._dims.pop(collection, None)
         self._id_map.pop(collection, None)
 
-    def get_vector_size(self, collection: str) -> Optional[int]:
+    def get_vector_size(self, collection: str) -> int | None:
+        """Return the collection's vector dimension, or None if it is missing.
+
+        Serves from the cached dimension when known; otherwise probes the Qdrant
+        server (which also refreshes the cache).
+        """
         cached = self._dims.get(collection)
         if cached is not None:
             return int(cached)
@@ -347,6 +400,11 @@ class QdrantVectorStore:
         return self._get_client()
 
     def close(self) -> None:
+        """Close the underlying client (if any) and drop the cached handle.
+
+        Tries ``close`` then ``shutdown``; client errors are logged and
+        swallowed. Safe to call when no client was ever created.
+        """
         if self._client is None:
             return
         for method in ("close", "shutdown"):
@@ -378,7 +436,7 @@ class QdrantVectorStore:
             self._client = QdrantClient(location=":memory:")
             logger.debug("QdrantVectorStore in-memory client ready")
         else:
-            kwargs: Dict[str, Any] = {
+            kwargs: dict[str, Any] = {
                 "url": self.url,
                 "prefer_grpc": self.prefer_grpc,
                 "timeout": self.timeout,
@@ -428,7 +486,7 @@ class QdrantVectorStore:
             )
         return value
 
-    def _probe_vector_size(self, collection: str) -> Optional[int]:
+    def _probe_vector_size(self, collection: str) -> int | None:
         client = self._get_client()
         try:
             info = client.get_collection(collection_name=collection)

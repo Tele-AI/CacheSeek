@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Start a TeleFuser Wan2.2 T2V service with a CacheSeek config in one file.
 
 One launcher, several concrete configs selected with ``--preset`` (see ``PRESETS``
@@ -19,7 +21,6 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
-
 
 CACHESEEK_REPO = Path(__file__).resolve().parents[2]
 # Instance-specific roots; override via env on your host. Experiment writes go to

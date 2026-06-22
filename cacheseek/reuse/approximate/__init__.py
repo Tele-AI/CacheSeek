@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """reuse.approximate — approximate-recall semantics: embedding ANN hit ->
 donor latent -> skip_step resumption.
 """

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """End-to-end flow tests for world_kv.
 
 A fake engine drives the full loop: cold request generation -> ingest ->

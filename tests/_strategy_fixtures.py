@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Shared stub backends + strategy factory for unit-testing
 ``VideoBasedApproximateCache``.
 
@@ -13,11 +15,10 @@ stubs via the returned strategy's attributes.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any
 
 from cacheseek.service.cache_types import VectorSearchResult
-
 
 # ─── KVStore stub ──────────────────────────────────────────────────────────
 
@@ -34,12 +35,12 @@ class StubKVStore:
     """
 
     def __init__(self) -> None:
-        self._store: Dict[str, bytes] = {}
+        self._store: dict[str, bytes] = {}
         self._forced_missing: set[str] = set()
-        self.put_should_raise: Optional[Exception] = None
-        self.remove_should_raise: Optional[Exception] = None
-        self.put_calls: List[tuple[str, bytes]] = []
-        self.remove_calls: List[str] = []
+        self.put_should_raise: Exception | None = None
+        self.remove_should_raise: Exception | None = None
+        self.put_calls: list[tuple[str, bytes]] = []
+        self.remove_calls: list[str] = []
 
     def preset(self, key: str, value: bytes) -> None:
         self._store[key] = value
@@ -47,7 +48,7 @@ class StubKVStore:
     def mark_missing(self, key: str) -> None:
         self._forced_missing.add(key)
 
-    def get(self, key: str) -> Optional[bytes]:
+    def get(self, key: str) -> bytes | None:
         if key in self._forced_missing:
             return None
         return self._store.get(key)
@@ -80,19 +81,19 @@ class StubVectorStore:
     """
 
     def __init__(self) -> None:
-        self.search_results: List[VectorSearchResult] = []
-        self.upsert_calls: List[tuple[str, str, list[float], dict]] = []
-        self.delete_calls: List[tuple[str, list[str]]] = []
-        self.ensure_calls: List[tuple[str, int]] = []
-        self.upsert_should_raise: Optional[Exception] = None
-        self.ensure_should_raise: Optional[Exception] = None
+        self.search_results: list[VectorSearchResult] = []
+        self.upsert_calls: list[tuple[str, str, list[float], dict]] = []
+        self.delete_calls: list[tuple[str, list[str]]] = []
+        self.ensure_calls: list[tuple[str, int]] = []
+        self.upsert_should_raise: Exception | None = None
+        self.ensure_should_raise: Exception | None = None
 
     def search(
         self,
         collection: str,
         vector: list[float],
         limit: int = 1,
-        score_threshold: Optional[float] = None,
+        score_threshold: float | None = None,
     ) -> list[VectorSearchResult]:
         return list(self.search_results[:limit])
 
@@ -101,7 +102,7 @@ class StubVectorStore:
         collection: str,
         point_id: str,
         vector: list[float],
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
     ) -> None:
         if self.upsert_should_raise is not None:
             raise self.upsert_should_raise
@@ -115,7 +116,7 @@ class StubVectorStore:
             raise self.ensure_should_raise
         self.ensure_calls.append((collection, int(vector_dim)))
 
-    def get_vector_size(self, collection: str) -> Optional[int]:
+    def get_vector_size(self, collection: str) -> int | None:
         return None
 
 
@@ -152,15 +153,15 @@ class StubMetadataStore:
     """
 
     def __init__(self) -> None:
-        self._registered: Dict[str, dict] = {}
-        self.register_calls: List[dict] = []
-        self.remove_calls: List[str] = []
-        self.access_calls: List[str] = []
-        self.similarity_recordings: List[_RecordedSimilarityScores] = []
-        self.hit_pair_recordings: List[_RecordedHitPair] = []
-        self.remove_should_raise: Optional[Exception] = None
-        self.register_should_raise: Optional[Exception] = None
-        self.get_meta_should_raise: Optional[Exception] = None
+        self._registered: dict[str, dict] = {}
+        self.register_calls: list[dict] = []
+        self.remove_calls: list[str] = []
+        self.access_calls: list[str] = []
+        self.similarity_recordings: list[_RecordedSimilarityScores] = []
+        self.hit_pair_recordings: list[_RecordedHitPair] = []
+        self.remove_should_raise: Exception | None = None
+        self.register_should_raise: Exception | None = None
+        self.get_meta_should_raise: Exception | None = None
 
     def register_cache(
         self,
@@ -169,7 +170,7 @@ class StubMetadataStore:
         saved_steps: list[int],
         size_mb: float,
         num_frames: int,
-        cache_type: Optional[str] = None,
+        cache_type: str | None = None,
     ) -> None:
         if self.register_should_raise is not None:
             raise self.register_should_raise
@@ -191,11 +192,11 @@ class StubMetadataStore:
         self.remove_calls.append(cache_id)
 
     def lookup_prompt(
-        self, prompt: str, cache_type: Optional[str] = None
-    ) -> Optional[Any]:
+        self, prompt: str, cache_type: str | None = None
+    ) -> Any | None:
         return None
 
-    def get_cache_meta(self, cache_id: str) -> Optional[dict]:
+    def get_cache_meta(self, cache_id: str) -> dict | None:
         if self.get_meta_should_raise is not None:
             raise self.get_meta_should_raise
         record = self._registered.get(cache_id)
@@ -259,11 +260,11 @@ class StubPromptEncoder:
     """Returns a fixed vector. Set ``return_value=[]`` to simulate empty
     embedding (one of the lookup miss paths)."""
 
-    def __init__(self, return_value: Optional[List[float]] = None) -> None:
-        self.return_value: List[float] = list(return_value) if return_value is not None else [0.1] * 4
-        self.calls: List[str] = []
+    def __init__(self, return_value: list[float] | None = None) -> None:
+        self.return_value: list[float] = list(return_value) if return_value is not None else [0.1] * 4
+        self.calls: list[str] = []
 
-    def encode(self, prompt: str) -> List[float]:
+    def encode(self, prompt: str) -> list[float]:
         self.calls.append(prompt)
         return list(self.return_value)
 
@@ -272,14 +273,14 @@ class StubVideoEncoder:
     """Returns a fixed vector. ``raise_on_call`` lets tests force save's
     encode_video failure path."""
 
-    def __init__(self, return_value: Optional[List[float]] = None) -> None:
-        self.return_value: List[float] = list(return_value) if return_value is not None else [0.2] * 4
-        self.calls: List[tuple] = []
-        self.raise_on_call: Optional[Exception] = None
+    def __init__(self, return_value: list[float] | None = None) -> None:
+        self.return_value: list[float] = list(return_value) if return_value is not None else [0.2] * 4
+        self.calls: list[tuple] = []
+        self.raise_on_call: Exception | None = None
 
     def encode_video(
-        self, frames: List[Any], prompt: Optional[str] = None
-    ) -> List[float]:
+        self, frames: list[Any], prompt: str | None = None
+    ) -> list[float]:
         if self.raise_on_call is not None:
             raise self.raise_on_call
         self.calls.append((len(frames), prompt))
@@ -293,16 +294,16 @@ class StubReranker:
 
     def __init__(
         self,
-        return_scores: Optional[List[float]] = None,
-        raise_on_call: Optional[Exception] = None,
+        return_scores: list[float] | None = None,
+        raise_on_call: Exception | None = None,
     ) -> None:
         self.return_scores = return_scores
         self.raise_on_call = raise_on_call
-        self.calls: List[tuple] = []
+        self.calls: list[tuple] = []
 
     def score_mm(
-        self, query: Dict[str, object], documents: List[Dict[str, object]]
-    ) -> List[float]:
+        self, query: dict[str, object], documents: list[dict[str, object]]
+    ) -> list[float]:
         if self.raise_on_call is not None:
             raise self.raise_on_call
         self.calls.append((dict(query), list(documents)))
@@ -325,8 +326,8 @@ def make_search_result(
     cache_id: str = "abc123",
     similarity: float = 0.95,
     prompt: str = "matched prompt",
-    saved_steps: Optional[List[int]] = None,
-    payload: Optional[Dict[str, Any]] = None,
+    saved_steps: list[int] | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> VectorSearchResult:
     """Build a VectorSearchResult with sensible defaults for tests."""
     return VectorSearchResult(
@@ -345,11 +346,11 @@ class StrategyKit:
     strategy: Any
     config: Any
     kv: StubKVStore
-    vector: Optional[StubVectorStore]
+    vector: StubVectorStore | None
     metadata: StubMetadataStore
     prompt_encoder: StubPromptEncoder
     video_encoder: StubVideoEncoder
-    reranker: Optional[StubReranker]
+    reranker: StubReranker | None
 
 
 def make_strategy(
@@ -359,13 +360,13 @@ def make_strategy(
     video_similarity_threshold: float = 0.10,
     rerank_top_k: int = 3,
     max_skip_step: int = 25,
-    key_steps: Optional[List[int]] = None,
-    vector_store: Optional[StubVectorStore] = None,
-    reranker: Optional[StubReranker] = None,
-    prompt_encoder: Optional[StubPromptEncoder] = None,
-    video_encoder: Optional[StubVideoEncoder] = None,
-    kv_store: Optional[StubKVStore] = None,
-    metadata_store: Optional[StubMetadataStore] = None,
+    key_steps: list[int] | None = None,
+    vector_store: StubVectorStore | None = None,
+    reranker: StubReranker | None = None,
+    prompt_encoder: StubPromptEncoder | None = None,
+    video_encoder: StubVideoEncoder | None = None,
+    kv_store: StubKVStore | None = None,
+    metadata_store: StubMetadataStore | None = None,
 ) -> StrategyKit:
     """Construct ``VideoBasedApproximateCache`` wired entirely with stubs.
 
@@ -379,8 +380,8 @@ def make_strategy(
     The returned ``StrategyKit`` exposes both the strategy and each stub
     so tests can assert recorded calls / state without re-fetching them.
     """
-    from cacheseek.service.config import CacheConfig
     from cacheseek.reuse.approximate.strategy import VideoBasedApproximateCache
+    from cacheseek.service.config import CacheConfig
 
     cfg = CacheConfig(
         # Disable encoder auto-build paths (tests inject explicit stubs).

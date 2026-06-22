@@ -1,9 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
+"""FAISS-backed VectorStore (embedded, on-disk index)."""
+
 from __future__ import annotations
 
 import json
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -11,6 +15,22 @@ from cacheseek.service.cache_types import VectorSearchResult
 
 
 class FAISSVectorStore:
+    """FAISS-backed VectorStore with on-disk persistence per collection.
+
+    Fulfils the ``VectorStore`` Protocol. Each collection is a flat FAISS index
+    wrapped in an ``IndexIDMap2`` plus a sidecar JSON holding the stable
+    string-``cache_id`` -> int-id map, payloads, and a monotonic ``next_id``.
+    Both are stored under ``index_dir`` as ``{collection}.faiss`` /
+    ``{collection}.json``; indices are cached in memory after first load.
+
+    ``index_type`` selects the metric: ``"cosine"`` (default; vectors are
+    L2-normalized and an inner-product index returns the cosine score directly),
+    ``"ip"``/``"innerproduct"`` (raw inner product), or ``"l2"`` (Euclidean,
+    converted to a similarity via ``1 / (1 + d)``). All operations are
+    serialized under a reentrant lock for thread safety. ``faiss`` is imported
+    lazily so installs that do not use this backend need not ship the wheel.
+    """
+
     def __init__(
         self,
         index_dir: Path,
@@ -21,17 +41,28 @@ class FAISSVectorStore:
         self.vector_dim = vector_dim
         self.index_type = index_type
         self._lock = threading.RLock()
-        self._indices: Dict[str, Any] = {}
-        self._metadata: Dict[str, Dict[str, Any]] = {}
+        self._indices: dict[str, Any] = {}
+        self._metadata: dict[str, dict[str, Any]] = {}
         self.index_dir.mkdir(parents=True, exist_ok=True)
 
     def search(
         self,
         collection: str,
-        vector: List[float],
+        vector: list[float],
         limit: int = 1,
-        score_threshold: Optional[float] = None,
-    ) -> List[VectorSearchResult]:
+        score_threshold: float | None = None,
+    ) -> list[VectorSearchResult]:
+        """Return up to ``limit`` nearest payloads for ``vector`` in ``collection``.
+
+        Returns an empty list if the collection does not exist. The query vector
+        is normalized for cosine indices; L2 distances are converted to a
+        similarity score. Results below ``score_threshold`` (when given) are
+        dropped, as are FAISS slots with no live ``id_map`` entry.
+
+        Raises:
+            ValueError: If ``vector`` length does not match the store's
+                configured ``vector_dim``.
+        """
         with self._lock:
             index = self._load_index(collection)
             if index is None:
@@ -53,8 +84,8 @@ class FAISSVectorStore:
                 faiss.normalize_L2(vec)
 
             distances, ids = index.search(vec, limit)
-            results: List[VectorSearchResult] = []
-            for dist, idx in zip(distances[0], ids[0]):
+            results: list[VectorSearchResult] = []
+            for dist, idx in zip(distances[0], ids[0], strict=False):
                 if idx < 0:
                     continue
                 point_id = self._find_point_id(id_map, int(idx))
@@ -82,9 +113,20 @@ class FAISSVectorStore:
         self,
         collection: str,
         point_id: str,
-        vector: List[float],
-        payload: Dict[str, Any],
+        vector: list[float],
+        payload: dict[str, Any],
     ) -> None:
+        """Insert or replace ``point_id`` with ``vector`` and ``payload``; persists.
+
+        Auto-creates the collection if missing. Re-upserting an existing
+        ``point_id`` removes the old vector first (keeping its int id), so the
+        operation is idempotent. The vector is normalized for cosine indices.
+
+        Raises:
+            ValueError: If ``vector`` length does not match the store's
+                configured ``vector_dim``.
+            RuntimeError: If the collection can be neither loaded nor created.
+        """
         with self._lock:
             index = self._load_index(collection)
             if index is None:
@@ -121,7 +163,12 @@ class FAISSVectorStore:
             payload_map[point_id] = payload
             self._save_index(collection, index)
 
-    def delete(self, collection: str, point_ids: List[str]) -> None:
+    def delete(self, collection: str, point_ids: list[str]) -> None:
+        """Remove the given point ids and their payloads from ``collection``; persists.
+
+        No-op for a missing collection or for ids not present. Always rewrites
+        the index/meta files (even when nothing matched).
+        """
         with self._lock:
             index = self._load_index(collection)
             if index is None:
@@ -140,6 +187,15 @@ class FAISSVectorStore:
             self._save_index(collection, index)
 
     def ensure_collection(self, collection: str, vector_dim: int) -> None:
+        """Create the collection's index if absent; no-op if it already exists.
+
+        The index family is chosen from ``index_type`` (``IndexFlatL2`` for
+        ``"l2"``, ``IndexFlatIP`` for inner-product / cosine) and wrapped in an
+        ``IndexIDMap2``. Initializes empty metadata and persists to disk.
+
+        Raises:
+            ValueError: If ``index_type`` is not a supported value.
+        """
         with self._lock:
             index = self._load_index(collection)
             if index is not None:
@@ -147,9 +203,7 @@ class FAISSVectorStore:
             faiss = self._import_faiss()
             if self.index_type.lower() == "l2":
                 base = faiss.IndexFlatL2(vector_dim)
-            elif self.index_type.lower() in ("ip", "innerproduct"):
-                base = faiss.IndexFlatIP(vector_dim)
-            elif self.index_type.lower() == "cosine":
+            elif self.index_type.lower() in ("ip", "innerproduct") or self.index_type.lower() == "cosine":
                 base = faiss.IndexFlatIP(vector_dim)
             else:
                 raise ValueError(f"Unsupported index_type: {self.index_type}")
@@ -158,14 +212,15 @@ class FAISSVectorStore:
             self._metadata[collection] = {"id_map": {}, "payload": {}, "next_id": 1}
             self._save_index(collection, index)
 
-    def get_vector_size(self, collection: str) -> Optional[int]:
+    def get_vector_size(self, collection: str) -> int | None:
+        """Return the collection's stored vector dimension, or None if it is missing."""
         with self._lock:
             index = self._load_index(collection)
             if index is None:
                 return None
             return int(index.d)
 
-    def _load_index(self, collection: str) -> Optional[Any]:
+    def _load_index(self, collection: str) -> Any | None:
         if collection in self._indices:
             return self._indices[collection]
         index_path, meta_path = self._get_paths(collection)
@@ -297,17 +352,17 @@ class FAISSVectorStore:
             raise ImportError("faiss is not installed; FAISSVectorStore is unavailable.") from exc
         return faiss
 
-    def _as_faiss_ids(self, ids: List[int]):
+    def _as_faiss_ids(self, ids: list[int]):
         import numpy as np
 
         return np.asarray(ids, dtype="int64")
 
-    def _remove_ids(self, index: Any, ids: List[int]) -> None:
+    def _remove_ids(self, index: Any, ids: list[int]) -> None:
         faiss = self._import_faiss()
         selector = faiss.IDSelectorBatch(len(ids), self._as_faiss_ids(ids))
         index.remove_ids(selector)
 
-    def _find_point_id(self, id_map: Dict[str, Any], idx: int) -> Optional[str]:
+    def _find_point_id(self, id_map: dict[str, Any], idx: int) -> str | None:
         for key, value in id_map.items():
             if int(value) == idx:
                 return str(key)

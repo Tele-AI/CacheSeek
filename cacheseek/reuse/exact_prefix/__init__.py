@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """world_kv — exact-prefix, cross-request persistent KV reuse cache for
 autoregressive video world models.
 
@@ -17,10 +19,11 @@ Consequences:
   - the version field must hash the real config blob (keys.config_blob_hash).
 """
 
+from cacheseek.stores.tier import InMemoryTierStore, TensorStoreTierStore
+
 from .config import ModelGeometry, WorldKVConfig, bytes_per_chunk_kv, calibrate_break_even_k
 from .keys import build_action_chain, config_blob_hash, derive_seed, node_key, root_hash
 from .manager import FastForwardResult, KVTierStore, RollingWindow, WorldKVManager
-from cacheseek.stores.tier import InMemoryTierStore, TensorStoreTierStore
 from .trie import (
     Namespace,
     NamespaceForest,

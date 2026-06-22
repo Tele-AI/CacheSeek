@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Smoke tests: the zero-dependency examples must always run."""
 import subprocess
 import sys

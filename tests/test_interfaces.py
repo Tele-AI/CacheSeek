@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Interface contract tests for cacheseek.service.interfaces + core data structures.
 
 Covers:
@@ -16,22 +18,21 @@ from __future__ import annotations
 
 import pytest
 
-
 # ─── Core interface Protocols ───────────────────────────────────────────────
 
 
 def test_core_interfaces_importable() -> None:
     from cacheseek.service.interfaces import (
-        KVStore,
-        VectorStore,
-        MetadataStore,
         AuditLog,
         EvictionPolicy,
+        FrameworkAdapter,
+        KVStore,
+        MetadataStore,
         PromptEncoder,
-        VideoEncoder,
         Reranker,
         Strategy,
-        FrameworkAdapter,
+        VectorStore,
+        VideoEncoder,
     )
     # All are runtime-checkable Protocols (have _is_runtime_protocol attr)
     for proto in (KVStore, VectorStore, MetadataStore, AuditLog, EvictionPolicy,
@@ -43,8 +44,8 @@ def test_core_interfaces_importable() -> None:
 def test_kv_store_protocol_satisfied_by_in_memory() -> None:
     """InMemoryKVStore satisfies the new core/interfaces/KVStore Protocol
     via structural typing (no inheritance change required)."""
-    from cacheseek.stores import InMemoryKVStore
     from cacheseek.service.interfaces import KVStore
+    from cacheseek.stores import InMemoryKVStore
 
     kv = InMemoryKVStore()
     assert isinstance(kv, KVStore), "InMemoryKVStore should satisfy KVStore Protocol structurally"
@@ -83,11 +84,11 @@ def test_lookup_result_miss() -> None:
 
 def test_resume_hint_sealed_union() -> None:
     from cacheseek import (
-        ResumeHint,
-        SkipStep,
         LoadStateSnapshot,
-        ReturnCachedOutput,
         NoOp,
+        ResumeHint,
+        ReturnCachedOutput,
+        SkipStep,
     )
 
     hints = [
@@ -145,8 +146,8 @@ def test_payload_to_kv_entries_naming() -> None:
 def test_payload_partial_loading_spec() -> None:
     """from_kv_loader requires explicit partial_spec; loads only specified steps."""
     from cacheseek.reuse.approximate import (
-        VideoApproxPayload,
         VideoApproxPartialSpec,
+        VideoApproxPayload,
     )
 
     fake_kv = {"abc_step5": b"only5", "abc_step10": b"only10"}

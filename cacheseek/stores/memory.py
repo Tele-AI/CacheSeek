@@ -1,15 +1,17 @@
-from __future__ import annotations
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
+"""In-memory KVStore: an ephemeral dict-backed store for tests and single-process use."""
 
-from typing import Dict, Optional
+from __future__ import annotations
 
 
 class InMemoryKVStore:
     """In-memory KV store backed by a plain dict."""
 
     def __init__(self) -> None:
-        self._store: Dict[str, bytes] = {}
+        self._store: dict[str, bytes] = {}
 
-    def get(self, key: str) -> Optional[bytes]:
+    def get(self, key: str) -> bytes | None:
         return self._store.get(key)
 
     def put(self, key: str, value: bytes) -> None:

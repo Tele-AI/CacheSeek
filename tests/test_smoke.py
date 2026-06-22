@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """cacheseek 0.1 alpha smoke tests.
 
 Validates:
@@ -19,7 +21,6 @@ import sys
 import types
 
 import pytest
-
 
 pytestmark = pytest.mark.smoke
 
@@ -83,7 +84,7 @@ def test_core_subpackages_import() -> None:
 
 
 def test_storage_interface_and_memory_backend() -> None:
-    from cacheseek.stores import KVStore, InMemoryKVStore
+    from cacheseek.stores import InMemoryKVStore, KVStore
 
     assert isinstance(InMemoryKVStore(), KVStore)
     kv = InMemoryKVStore()

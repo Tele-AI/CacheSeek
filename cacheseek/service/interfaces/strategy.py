@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Strategy Protocol — contract for cache strategies."""
 
 from __future__ import annotations
@@ -38,11 +40,46 @@ class Strategy(Protocol):
 
     async def lookup(
         self, query: CacheQuery, ctx: Any = None
-    ) -> LookupResult: ...
+    ) -> LookupResult:
+        """Decide whether ``query`` hits a stored cache.
+
+        Resolves the request against the strategy's backends (encode, vector
+        search, optional rerank) and decides whether a usable cache exists. On
+        a hit, populates the heavy ``payload`` and the light ``resume_hint``
+        (the instruction the FrameworkAdapter applies to the engine). Must
+        degrade to a miss rather than raise on a recoverable backend failure.
+
+        Args:
+            query: Strategy-agnostic lookup request built by the
+                FrameworkAdapter.
+            ctx: Optional strategy-specific context (e.g. the engine handle);
+                strategies that do not need it ignore it.
+
+        Returns:
+            A LookupResult. On a miss, ``hit`` is False with
+            ``payload`` / ``resume_hint`` unset and an optional
+            ``miss_reason`` tag.
+        """
+        ...
 
     async def save(
         self,
         query: CacheQuery,
         outputs: ModelOutputs,
         ctx: Any = None,
-    ) -> None: ...
+    ) -> None:
+        """Persist what ``query`` produced for future reuse.
+
+        Encodes/indexes ``outputs`` and writes the durable artifacts (vectors,
+        payload, metadata) through the injected backends, applying any
+        configured eviction policy. Carries no per-request state on ``self``
+        across ``await``. Safe to call concurrently with other ``save`` /
+        ``lookup`` calls.
+
+        Args:
+            query: The request the outputs were generated for.
+            outputs: Strategy-agnostic save-side payload (latents, frames,
+                step metadata).
+            ctx: Optional strategy-specific context; ignored when unused.
+        """
+        ...

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Pure Fluxon transport timing (serialize/deserialize EXCLUDED).
 
 Isolates the Fluxon put/get itself from torch ser/deser. Payloads are built

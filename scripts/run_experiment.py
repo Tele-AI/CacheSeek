@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """CacheSeek experiment driver — pure HTTP client.
 
 POSTs each prompt of a JSONL dataset to an **already-running** TeleFuser

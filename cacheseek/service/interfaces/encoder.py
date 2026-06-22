@@ -1,8 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Encoder Protocols — prompt → vector and video → vector contracts."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     # Only used for type annotations; avoids importing PIL at module load.
@@ -25,7 +27,22 @@ class PromptEncoder(Protocol):
       ``encode`` with the signature below satisfies ``isinstance``.
     """
 
-    def encode(self, prompt: str) -> list[float]: ...
+    def encode(self, prompt: str) -> list[float]:
+        """Encode a text prompt into a fixed-dimension embedding vector.
+
+        Deterministic for a given encoder configuration: the same ``prompt``
+        always yields the same vector. The returned vector's dimension is
+        constant for the encoder and must match the dimension of the
+        VectorStore collection it is searched against. L2-normalized output is
+        expected so that cosine and dot-product similarity coincide.
+
+        Args:
+            prompt: Text to embed.
+
+        Returns:
+            The embedding as a list of floats.
+        """
+        ...
 
 
 @runtime_checkable
@@ -45,6 +62,22 @@ class VideoEncoder(Protocol):
 
     def encode_video(
         self,
-        frames: list["Image.Image"],
-        prompt: Optional[str] = None,
-    ) -> list[float]: ...
+        frames: list[Image.Image],
+        prompt: str | None = None,
+    ) -> list[float]:
+        """Encode a sequence of video frames into a fixed-dimension embedding.
+
+        Deterministic for a given encoder configuration. The returned vector's
+        dimension is constant for the encoder and must match the VectorStore
+        collection it is stored in. L2-normalized output is expected.
+
+        Args:
+            frames: Video frames to embed, in temporal order.
+            prompt: Optional query hint. Multimodal encoders may condition the
+                embedding on it; unimodal encoders ignore it. Passing it must
+                never break the contract.
+
+        Returns:
+            The embedding as a list of floats.
+        """
+        ...

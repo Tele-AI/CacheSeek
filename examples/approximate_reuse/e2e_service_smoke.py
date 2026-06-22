@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """approximate x TeleFuser service-level e2e smoke (pure HTTP, no heavy imports).
 
 Prerequisite: the wan22 service is already running (start it with

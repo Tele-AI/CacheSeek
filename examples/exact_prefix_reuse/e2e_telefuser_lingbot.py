@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
+# ruff: noqa: E402  (imports intentionally follow the sys.path/editable-finder shim)
 """exact_prefix x TeleFuser e2e: replay/fork consistency of exact-prefix fast-forward.
 
 Single process, four requests (no service; forest/store shared in-process):
@@ -64,12 +67,16 @@ from telefuser.pipelines.lingbot_world_fast import (
 )
 
 from cacheseek.reuse.exact_prefix import NamespaceForest, WorldKVManager
+from cacheseek.reuse.exact_prefix.telefuser_lingbot import (
+    LingBotWorldKVBinding,
+    make_rolling_config,
+)
 from cacheseek.stores import InMemoryTierStore
-from cacheseek.reuse.exact_prefix.telefuser_lingbot import LingBotWorldKVBinding, make_rolling_config
 
 if _WORLDKV_ROOTS:                       # self-check: imports must resolve to our clone
-    import cacheseek as _cs
     import telefuser as _tf
+
+    import cacheseek as _cs
     for _mod in (_tf, _cs):
         _src = inspect.getsourcefile(_mod) or ""
         assert any(_src.startswith(r) for r in _WORLDKV_ROOTS), f"{_mod.__name__} resolved to {_src} (editable finder not stripped?)"
@@ -216,8 +223,8 @@ def main() -> int:
 
     def make_store():
         if args.store == "fluxon":
-            from cacheseek.stores.fluxon import FluxonKVStore
             from cacheseek.stores import TensorStoreTierStore
+            from cacheseek.stores.fluxon import FluxonKVStore
             assert args.fluxon_config, "--store fluxon requires --fluxon-config"
             # True async writes: put enqueues and returns, worker publishes ready after
             # draining (write latency moved out of the chunk loop).

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """WorldKVManager — four actions: lookup → materialize(fast-forward) → ingest(write-through) → evict.
 
 Compute-saving path (exact prefix):
@@ -24,10 +26,37 @@ from .types import ActionKey, BlobHandle, NodeKey, RootHash, Skeleton, TrieNode
 
 class KVTierStore(Protocol):
     """Tiered blob store. Functional phase: synchronous is fine; perf phase: truly async + overlapped with compute."""
-    def put_async(self, locator: str, payload: Sequence[Any], *, tier: Any, on_ready: Any = None) -> None: ...
-    def get_layer(self, handle: BlobHandle, layer: int) -> Any: ...
-    def put_skeleton(self, locator: str, latent: Any) -> None: ...
-    def free(self, handle: BlobHandle) -> None: ...
+    def put_async(self, locator: str, payload: Sequence[Any], *, tier: Any, on_ready: Any = None) -> None:
+        """Write a heavy KV blob (one element per layer) under locator, on the given tier.
+
+        The write may complete asynchronously; ``on_ready`` (if given) is invoked
+        once the blob is durable, which is what publishes it to readers (sets the
+        BlobHandle ready). Until then the blob must not be visible to lookups.
+
+        Args:
+            locator: Content-addressed key for the blob (node_key.hex() + ":kv").
+            payload: Per-layer KV data to persist.
+            tier: Target storage tier.
+            on_ready: Optional callback fired when the write is durable.
+        """
+        ...
+    def get_layer(self, handle: BlobHandle, layer: int) -> Any:
+        """Read back one layer's KV for a previously written blob.
+
+        Args:
+            handle: Handle to a ready blob (from a prior put_async).
+            layer: Zero-based layer index in [0, handle.n_layers).
+
+        Returns:
+            The stored payload element for that layer.
+        """
+        ...
+    def put_skeleton(self, locator: str, latent: Any) -> None:
+        """Persist the cheap skeleton latent (kept forever, never LRU-evicted)."""
+        ...
+    def free(self, handle: BlobHandle) -> None:
+        """Release the heavy KV blob backing handle (eviction); the skeleton is untouched."""
+        ...
 
 
 class RollingWindow(Protocol):
@@ -37,20 +66,51 @@ class RollingWindow(Protocol):
     blobs are given as ``(chunk_depth, layer_payload)`` (oldest→newest); the adapter assembles them
     into the engine's own physical layout (full-length / rolling ring).
     """
-    def seed_layer(self, layer: int, blobs: Sequence[tuple[int, Any]], depth: int) -> None: ...
-    def set_resume_depth(self, depth: int) -> None: ...                  # sets RoPE offset + write position
+    def seed_layer(self, layer: int, blobs: Sequence[tuple[int, Any]], depth: int) -> None:
+        """Seed one attention layer's KV pool with the sink + window historical KV.
+
+        Args:
+            layer: Zero-based attention layer index to seed.
+            blobs: ``(chunk_depth, layer_payload)`` pairs ordered oldest -> newest;
+                the adapter assembles them into the engine's physical layout
+                (full-length or rolling ring).
+            depth: Depth of the resume node, used to place blobs at the correct
+                ring positions.
+        """
+        ...
+    def set_resume_depth(self, depth: int) -> None:
+        """Set the resume position: RoPE time-axis offset and the next write slot for chunk depth+1."""
+        ...                  # sets RoPE offset + write position
 
 
 @dataclass(slots=True)
 class FastForwardResult:
+    """Outcome of try_fast_forward: where to resume and the trie handles for the next ingest."""
+
     start_chunk: int                 # 0 ⇒ compute from scratch (no reuse)
     node: TrieNode | None            # resume mount point (parent for the next ingest); the virtual root may serve too
     namespace: Namespace | None      # None ⇒ namespace miss (caller must get_or_create)
 
 
 class WorldKVManager:
+    """Orchestrates the four cache actions over a trie forest and tiered store:
+    lookup -> materialize (fast-forward) -> ingest (write-through) -> evict.
+
+    Holds no per-request mutable state; the trie forest and store carry durable
+    state. Does not depend on ``cacheseek.kv_manager``.
+    """
+
     def __init__(self, forest: NamespaceForest, store: KVTierStore, cfg: WorldKVConfig,
                  *, clock: Any = None) -> None:
+        """Wire the manager to its forest, store, and config.
+
+        Args:
+            forest: The namespace forest holding all action tries.
+            store: Tiered blob store for KV blobs and skeleton latents.
+            cfg: Window geometry, break-even gate, and quant/commit settings.
+            clock: Optional injectable time source (seconds, monotonic) for
+                last_access bookkeeping; defaults to a constant for determinism.
+        """
         self.forest = forest
         self.store = store
         self.cfg = cfg

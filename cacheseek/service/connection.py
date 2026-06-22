@@ -1,38 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
+"""ConnectionManager — lazily builds the KV / vector / encoder / reranker backends from CacheConfig."""
+
 from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from loguru import logger
 
-from cacheseek.stores.base import KVStore
-from cacheseek.service.interfaces.vector_store import VectorStore
 from cacheseek.service.interfaces.encoder import PromptEncoder, VideoEncoder
+from cacheseek.service.interfaces.vector_store import VectorStore
+from cacheseek.stores.base import KVStore
 
 
 class ConnectionManager:
+    """Lazy, thread-safe owner of the swappable cache backends.
+
+    Builds and holds the VectorStore, KVStore, and the encoder/reranker
+    trio from ``config``. Each backend is created on first access behind a
+    double-checked lock, so construction is cheap and connections open only
+    when actually used. Strategies depend on the backend Protocols and never
+    construct concrete backends themselves; ``ConnectionManager`` is the one
+    place config maps to concrete implementations.
+
+    The encoders may share a single underlying model instance (see
+    ``_create_encoders``); ``shutdown`` closes and resets every owned handle.
+    """
+
     def __init__(
         self,
         config: Any,
-        storage_dir: Optional[Path] = None,
+        storage_dir: Path | None = None,
     ) -> None:
         self._config = config
         self._storage_dir = Path(storage_dir) if storage_dir else None
         self._lock = threading.Lock()
 
-        self._vector_store: Optional[VectorStore] = None
+        self._vector_store: VectorStore | None = None
         self._vector_store_created = False
-        self._kv_store: Optional[KVStore] = None
+        self._kv_store: KVStore | None = None
         self._kv_store_created = False
 
         self._encoders_created = False
-        self._prompt_encoder: Optional[PromptEncoder] = None
-        self._video_encoder: Optional[VideoEncoder] = None
-        self._reranker: Optional[object] = None
+        self._prompt_encoder: PromptEncoder | None = None
+        self._video_encoder: VideoEncoder | None = None
+        self._reranker: object | None = None
 
     @property
-    def vector_store(self) -> Optional[VectorStore]:
+    def vector_store(self) -> VectorStore | None:
         """Lazily create the VectorStore connection (Qdrant / FAISS)."""
         if not self._vector_store_created:
             with self._lock:
@@ -42,7 +59,7 @@ class ConnectionManager:
         return self._vector_store
 
     @property
-    def kv_store(self) -> Optional[KVStore]:
+    def kv_store(self) -> KVStore | None:
         """Lazily create the KVStore connection (Fluxon / LocalFile)."""
         if not self._kv_store_created:
             with self._lock:
@@ -52,19 +69,19 @@ class ConnectionManager:
         return self._kv_store
 
     @property
-    def prompt_encoder(self) -> Optional[PromptEncoder]:
+    def prompt_encoder(self) -> PromptEncoder | None:
         """Lazily create the prompt encoder (backend assembled from config)."""
         self._ensure_encoders()
         return self._prompt_encoder
 
     @property
-    def video_encoder(self) -> Optional[VideoEncoder]:
+    def video_encoder(self) -> VideoEncoder | None:
         """Lazily create the video encoder (may share the prompt encoder instance to save GPU memory)."""
         self._ensure_encoders()
         return self._video_encoder
 
     @property
-    def reranker(self) -> Optional[object]:
+    def reranker(self) -> object | None:
         """Lazily create the reranker (built when rerank_enabled; degrades gracefully to None if weights/deps are missing)."""
         self._ensure_encoders()
         return self._reranker
@@ -146,8 +163,8 @@ class ConnectionManager:
             )
             return encoder
 
-        prompt_encoder: Optional[PromptEncoder] = None
-        video_encoder: Optional[VideoEncoder] = None
+        prompt_encoder: PromptEncoder | None = None
+        video_encoder: VideoEncoder | None = None
 
         if use_text_embedding:
             prompt_encoder = _build_prompt_encoder()
@@ -175,7 +192,7 @@ class ConnectionManager:
             else:
                 video_encoder = _build_video_encoder()
 
-        reranker: Optional[object] = None
+        reranker: object | None = None
         if getattr(config, "rerank_enabled", False):
             # rerank is on by default (false-hit gate), but degrade gracefully
             # to vector-similarity-only when the reranker is unavailable —
@@ -211,6 +228,19 @@ class ConnectionManager:
         return prompt_encoder, video_encoder, reranker
 
     def health_check(self) -> dict:
+        """Report the status of each backend without forcing creation.
+
+        Does not access the lazy properties, so a backend that has never
+        been touched stays uninitialized. For each store the result maps to
+        a status of ``not_initialized`` (never built), ``disabled`` (built
+        but resolved to ``None``), or ``connected``. For a vector store that
+        exposes a ``client``, an extra reachability probe is attempted and
+        recorded under ``reachable`` (with ``error`` on failure).
+
+        Returns:
+            A dict keyed by ``"vector_store"`` / ``"kv_store"``, each value a
+            status dict as described above.
+        """
         result: dict = {}
 
         vs = self._vector_store
@@ -250,6 +280,13 @@ class ConnectionManager:
         return result
 
     def shutdown(self) -> None:
+        """Close the vector and KV stores and reset them to uninitialized.
+
+        For each created store, calls its ``shutdown`` or ``close`` (the
+        first that exists), swallowing and logging any error so one failing
+        backend cannot block the other. After this the lazy properties will
+        rebuild backends on next access. Encoders are not closed here.
+        """
         with self._lock:
             for name, store in [
                 ("vector_store", self._vector_store),
@@ -274,7 +311,12 @@ class ConnectionManager:
             self._kv_store = None
             self._kv_store_created = False
 
-    def _create_vector_store(self) -> Optional[VectorStore]:
+    def _create_vector_store(self) -> VectorStore | None:
+        """Build the VectorStore from ``vector_store_type`` (faiss / qdrant).
+
+        Returns ``None`` when the type is unset or unrecognized, leaving the
+        vector store disabled rather than failing construction.
+        """
         from cacheseek.backends.vector.qdrant import QdrantVectorStore
 
         config = self._config
@@ -301,7 +343,7 @@ class ConnectionManager:
             logger.debug("vector_store_type not set; vector store disabled")
         return None
 
-    def _build_faiss_store(self) -> "VectorStore":
+    def _build_faiss_store(self) -> VectorStore:
         from cacheseek.backends.vector.faiss import FAISSVectorStore
 
         config = self._config
@@ -318,6 +360,12 @@ class ConnectionManager:
         )
 
     def _create_kv_store(self) -> KVStore:
+        """Build the KVStore from ``kv_store_type``, defaulting to LocalFile.
+
+        ``fluxon`` builds a ``FluxonKVStore`` (init failure is fatal and
+        re-raised as ``RuntimeError``); any other or unset type falls back to
+        ``LocalFileKVStore`` under ``storage_dir``.
+        """
         from cacheseek.stores.fluxon import FluxonKVStore
         from cacheseek.stores.local_file import LocalFileKVStore
 

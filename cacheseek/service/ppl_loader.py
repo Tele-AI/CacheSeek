@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Import a symbol from a Python file by path (e.g. CACHE_CONFIG / PPL_CONFIG
 defined in a ppl file).
 

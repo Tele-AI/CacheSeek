@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Self-KV restore I/O decomposition probe (read-side, no model load).
 
 The service-form E2E showed self-KV restore (~10s/chunk) and save (~8s/chunk)

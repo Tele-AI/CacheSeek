@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Understand exact_prefix reuse in 60 seconds -- pure Python, no GPU, no weights.
 
 Uses string stand-ins as the KV payload, exercises the real trie/manager code path, and

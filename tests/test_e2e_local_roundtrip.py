@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Local service-level e2e tests.
 
 These tests exercise the CacheSeek lifecycle without external services:
@@ -17,17 +19,16 @@ from typing import Any
 import pytest
 import torch
 
+from cacheseek.backends.metadata import LocalCacheMetadataManager
+from cacheseek.reuse.approximate.strategy import VideoBasedApproximateCache
 from cacheseek.service.cache_types import VectorSearchResult
 from cacheseek.service.config import CacheConfig, CacheMode
+from cacheseek.service.interfaces.vector_store import VectorStore
 from cacheseek.service.lifecycle import CacheService
-from cacheseek.backends.metadata import LocalCacheMetadataManager
 from cacheseek.service.outputs import ModelOutputs
 from cacheseek.service.query import CacheQuery
 from cacheseek.service.result import SkipStep
 from cacheseek.stores import InMemoryKVStore
-from cacheseek.reuse.approximate.strategy import VideoBasedApproximateCache
-from cacheseek.service.interfaces.vector_store import VectorStore
-
 
 pytestmark = pytest.mark.e2e
 
@@ -109,7 +110,7 @@ class _InMemoryVectorStore(VectorStore):
 
     @staticmethod
     def _cosine(left: list[float], right: list[float]) -> float:
-        numerator = sum(a * b for a, b in zip(left, right))
+        numerator = sum(a * b for a, b in zip(left, right, strict=False))
         left_norm = math.sqrt(sum(a * a for a in left))
         right_norm = math.sqrt(sum(b * b for b in right))
         if left_norm == 0.0 or right_norm == 0.0:

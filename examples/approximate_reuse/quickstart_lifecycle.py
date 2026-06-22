@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Minimal, host-agnostic CacheSeek example — no TeleFuser, no GPU, no qdrant.
 
 This is the *decoupled* integration example: it shows the full CacheService
@@ -20,15 +22,14 @@ Run:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
-
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # repo root: run directly without pip install -e
 
-from cacheseek import CacheService, CacheQuery
+from cacheseek import CacheQuery, CacheService
 from cacheseek.service.outputs import ModelOutputs
 from cacheseek.service.result import LookupResult, SkipStep
 

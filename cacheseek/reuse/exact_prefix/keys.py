@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """KEY algorithm — model-agnostic hashing.
 
 KEY structure:
@@ -26,6 +28,11 @@ def sha256(*parts: bytes) -> bytes:
 
 
 def canonical_json_bytes(value: Any) -> bytes:
+    """Deterministic JSON encoding (sorted keys, no whitespace) for stable hashing.
+
+    Sorting keys and dropping separators make the byte output insensitive to dict
+    ordering and formatting, so equal values always produce equal bytes.
+    """
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
@@ -45,6 +52,11 @@ def root_hash(*, image_fp: bytes, prompt_fp: bytes, config_blob_hash: bytes) -> 
 
 
 def node_key(parent_node_key: bytes, action_bytes: bytes) -> bytes:
+    """Content-address one chunk: H(parent_node_key, action_bytes).
+
+    Chaining from the parent makes the key transitively encode (root + all
+    actions on the path), so it is globally unique across namespaces.
+    """
     return sha256(b"node", parent_node_key, action_bytes)
 
 

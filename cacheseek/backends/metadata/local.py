@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
+"""Local filesystem MetadataStore: a JSON cache index plus size/access accounting."""
+
 from __future__ import annotations
 
 import json
@@ -5,7 +9,6 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
 
@@ -13,6 +16,22 @@ from cacheseek.service.cache_types import IndexEntry
 
 
 class LocalCacheMetadataManager:
+    """File-backed metadata store + audit log for the local cache.
+
+    Fulfils both the ``MetadataStore`` (cache index, access stats, eviction
+    planning) and ``AuditLog`` (``record_hit_pair`` / ``record_similarity_scores``)
+    Protocols. State persists as two JSON documents under ``metadata_cache_dir``:
+    ``prompt_index.json`` (a ``{cache_type: {cache_id: IndexEntry}}`` index keyed
+    for fast prompt lookup) and ``cache_meta.json`` (per-cache size / access
+    stats for eviction). Audit events are appended to sibling ``.jsonl`` files.
+
+    All mutating operations are serialized under a reentrant lock, so the
+    instance is safe to share across ``CacheService`` worker threads. Index and
+    meta writes are atomic (temp file + ``os.replace``). When
+    ``flush_on_record_access`` is False, ``record_access`` only marks meta dirty
+    in memory and defers the disk write until ``flush`` / ``shutdown``.
+    """
+
     def __init__(
         self,
         metadata_cache_dir: str | Path,
@@ -25,8 +44,8 @@ class LocalCacheMetadataManager:
         self._index_path = self.metadata_cache_dir / "prompt_index.json"
         self._meta_path = self.metadata_cache_dir / "cache_meta.json"
         self._lock = threading.RLock()
-        self._index: Dict[str, Dict[str, IndexEntry]] = self._load_index()
-        self._meta: Dict[str, Dict[str, object]] = self._load_meta()
+        self._index: dict[str, dict[str, IndexEntry]] = self._load_index()
+        self._meta: dict[str, dict[str, object]] = self._load_meta()
         self._flush_on_record_access = bool(flush_on_record_access)
         self._meta_dirty = False
 
@@ -34,11 +53,17 @@ class LocalCacheMetadataManager:
         self,
         cache_id: str,
         prompt: str,
-        saved_steps: List[int],
+        saved_steps: list[int],
         size_mb: float,
         num_frames: int,
-        cache_type: Optional[str] = None,
+        cache_type: str | None = None,
     ) -> None:
+        """Index a cache entry and (re)write its size/access metadata; persists both files.
+
+        ``saved_steps`` are deduped and sorted; ``cache_type`` defaults to
+        ``"approximate_cache"``. Re-registering an existing ``cache_id`` preserves its
+        prior ``access_count`` and refreshes ``last_access_time``.
+        """
         steps = sorted(set(int(s) for s in saved_steps))
         # Normalize so None never collides with the string "None" after JSON round-trip.
         normalized_cache_type = self._normalize_cache_type(cache_type)
@@ -63,6 +88,12 @@ class LocalCacheMetadataManager:
             self._save_meta()
 
     def remove_cache(self, cache_id: str) -> None:
+        """Drop a cache from both the index and the meta map; persists both files.
+
+        Uses the recorded ``cache_type`` to find the index bucket in O(1);
+        falls back to a full scan across all buckets if it is missing. No-op if
+        ``cache_id`` is unknown.
+        """
         with self._lock:
             meta = self._meta.pop(cache_id, None)
             cache_type = meta.get("cache_type") if meta else None
@@ -79,12 +110,18 @@ class LocalCacheMetadataManager:
             self._save_index()
             self._save_meta()
 
-    def lookup_prompt(self, prompt: str, cache_type: Optional[str] = None) -> Optional[IndexEntry]:
+    def lookup_prompt(self, prompt: str, cache_type: str | None = None) -> IndexEntry | None:
+        """Return the earliest-indexed entry whose prompt exactly equals ``prompt``.
+
+        When ``cache_type`` is given, only that bucket is scanned; otherwise the
+        default bucket (``"approximate_cache"``) is tried first, then the rest.
+        Returns None if no exact match exists.
+        """
         # dict.values() iterates in insertion order (Python 3.7+), so when the
         # same prompt was saved multiple times this returns the earliest-inserted
         # entry; calling it in a loop (as purge_by_prompt does) clears the full
         # history.
-        def _scan(mapping: Dict[str, IndexEntry]) -> Optional[IndexEntry]:
+        def _scan(mapping: dict[str, IndexEntry]) -> IndexEntry | None:
             for entry in mapping.values():
                 if entry.prompt == prompt:
                     return entry
@@ -103,7 +140,8 @@ class LocalCacheMetadataManager:
                     return entry
             return None
 
-    def get_cache_meta(self, cache_id: str) -> Optional[dict]:
+    def get_cache_meta(self, cache_id: str) -> dict | None:
+        """Return a copy of the cache's metadata dict, or None if unknown."""
         with self._lock:
             meta = self._meta.get(cache_id)
             if meta is None:
@@ -111,6 +149,12 @@ class LocalCacheMetadataManager:
             return dict(meta)
 
     def record_access(self, cache_id: str) -> None:
+        """Bump the cache's access count and last-access time; no-op if unknown.
+
+        The ``cache_id`` is normalized (dashes stripped) before lookup. The meta
+        write is flushed immediately unless ``flush_on_record_access`` is False,
+        in which case the update is buffered and persisted on the next ``flush``.
+        """
         normalized = self._normalize_cache_id(cache_id)
         with self._lock:
             meta = self._meta.get(normalized)
@@ -130,9 +174,18 @@ class LocalCacheMetadataManager:
                 self._save_meta()
 
     def shutdown(self) -> None:
+        """Flush any deferred meta updates before the process exits."""
         self.flush()
 
-    def plan_eviction(self, required_mb: float, limit_mb: float) -> List[Tuple[str, Dict[str, object]]]:
+    def plan_eviction(self, required_mb: float, limit_mb: float) -> list[tuple[str, dict[str, object]]]:
+        """Select least-recently-accessed caches to evict to fit a new write.
+
+        Computes current total size from the meta map; if adding ``required_mb``
+        stays within ``limit_mb``, returns an empty list. Otherwise returns
+        ``(cache_id, meta)`` pairs ordered oldest-access-first, accumulating just
+        enough to free the deficit. This is a plan only — it does not mutate
+        state or delete anything.
+        """
         with self._lock:
             current_mb = sum(float(v.get("size_mb", 0.0)) for v in self._meta.values())
             if current_mb + required_mb <= limit_mb:
@@ -142,7 +195,7 @@ class LocalCacheMetadataManager:
                 self._meta.items(),
                 key=lambda kv: float(kv[1].get("last_access_time", 0.0)),
             )
-            selected: List[Tuple[str, Dict[str, object]]] = []
+            selected: list[tuple[str, dict[str, object]]] = []
             freed = 0.0
             for cache_id, meta in items:
                 selected.append((cache_id, meta))
@@ -161,6 +214,12 @@ class LocalCacheMetadataManager:
         cache_type: str,
         skip_step: int,
     ) -> None:
+        """Append one cache-hit record to ``hit_pairs.jsonl`` (AuditLog surface).
+
+        Writes a single JSON line pairing the incoming request prompt with the
+        matched cached prompt and the hit's similarity / task / cache type and
+        skip step. The row schema mirrors ``HitPairEvent``.
+        """
         payload = {
             "timestamp": float(time.time()),
             "request_prompt": str(request_prompt or ""),
@@ -181,8 +240,14 @@ class LocalCacheMetadataManager:
         task_type: str,
         cache_type: str,
         stage: str,
-        candidates: List[dict],
+        candidates: list[dict],
     ) -> None:
+        """Append a candidate-ranking snapshot to ``similarity_scores.jsonl``.
+
+        Records the scored ``candidates`` for one ranking ``stage`` (e.g.
+        ``"vector_search"`` or ``"rerank"``) against a request. The row schema
+        mirrors ``SimilarityScoreEvent``.
+        """
         payload = {
             "timestamp": float(time.time()),
             "request_prompt": str(request_prompt or ""),
@@ -195,18 +260,18 @@ class LocalCacheMetadataManager:
         with log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=True) + "\n")
 
-    def _load_index(self) -> Dict[str, Dict[str, IndexEntry]]:
+    def _load_index(self) -> dict[str, dict[str, IndexEntry]]:
         if not self._index_path.exists():
             return {}
         raw = self._read_json_object(self._index_path, "prompt index")
 
         # Schema: {cache_type: {cache_id: entry_dict}}
-        result: Dict[str, Dict[str, IndexEntry]] = {}
+        result: dict[str, dict[str, IndexEntry]] = {}
         for cache_type, entries in raw.items():
             if not isinstance(entries, dict) or not entries:
                 continue
             ct_str = str(cache_type)
-            mapping: Dict[str, IndexEntry] = {}
+            mapping: dict[str, IndexEntry] = {}
             for cache_id, entry in entries.items():
                 if not isinstance(entry, dict):
                     continue
@@ -220,7 +285,7 @@ class LocalCacheMetadataManager:
                 result[ct_str] = mapping
         return result
 
-    def _load_meta(self) -> Dict[str, Dict[str, object]]:
+    def _load_meta(self) -> dict[str, dict[str, object]]:
         if not self._meta_path.exists():
             return {}
         raw = self._read_json_object(self._meta_path, "cache metadata")
@@ -228,7 +293,7 @@ class LocalCacheMetadataManager:
 
     def _save_index(self) -> None:
         # Schema: {cache_type: {cache_id: entry_dict}}
-        data: Dict[str, Dict[str, Dict[str, object]]] = {}
+        data: dict[str, dict[str, dict[str, object]]] = {}
         for cache_type, mapping in self._index.items():
             data[str(cache_type)] = {
                 cache_id: {
@@ -253,11 +318,11 @@ class LocalCacheMetadataManager:
     def _normalize_cache_id(self, cache_id: str) -> str:
         return (cache_id or "").replace("-", "")
 
-    def _normalize_cache_type(self, cache_type: Optional[str]) -> str:
+    def _normalize_cache_type(self, cache_type: str | None) -> str:
         cache_type = str(cache_type or "").strip()
         return cache_type or self._default_cache_type
 
-    def _read_json_object(self, path: Path, label: str) -> Dict[str, object]:
+    def _read_json_object(self, path: Path, label: str) -> dict[str, object]:
         try:
             raw = path.read_text()
         except OSError as exc:

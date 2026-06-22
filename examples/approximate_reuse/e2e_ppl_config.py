@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Example CACHE_CONFIG for the approximate e2e (paths injected via env vars for cross-machine reuse).
 
 Required env vars:

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """WorldKVConfig + model geometry + break_even_k calibration.
 
 break_even_k is not a magic constant; it is computed from three quantities:
@@ -8,11 +10,9 @@ break_even_k is not a magic constant; it is computed from three quantities:
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 from .types import Tier
-
 
 # Quantization scheme. Default NONE (bf16 lossless): the impact of KV quantization on
 # LingBot quality has not yet been implemented/validated, so int4 is not assumed. Quantization
@@ -26,12 +26,19 @@ QUANT_BYTES_PER_ELEM = {
 
 @dataclass(slots=True)
 class ModelGeometry:
+    """Per-model KV geometry used to size one chunk's cache and the break-even cost model.
+
+    Fields are model/checkpoint constants; chunk_tokens folds in the active
+    resolution (frame_seqlen depends on H, W).
+    """
+
     n_layers: int
     n_kv_heads: int          # under GQA much smaller than attn heads; confirm whether the ckpt uses GQA
     head_dim: int
     chunk_tokens: int        # = num_frame_per_chunk(latent) × frame_seqlen
 
     def kv_elems_per_chunk(self) -> int:
+        """Number of KV elements stored for one chunk: layers x (k,v) x tokens x heads x head_dim."""
         # per-layer × (k,v) × token × head × head_dim
         return self.n_layers * 2 * self.chunk_tokens * self.n_kv_heads * self.head_dim
 
@@ -64,6 +71,11 @@ def fetch_per_chunk_s(
     group_size: int = 64,
     overlap_factor: float = 1.0,       # <1: fraction overlappable with compute (per-layer prefetch)
 ) -> float:
+    """Wall-clock seconds to fetch one chunk's KV = bytes / bandwidth, scaled by overlap_factor.
+
+    F in the break-even inequality. overlap_factor < 1 models the fraction of the
+    fetch that cannot be hidden behind compute (per-layer prefetch).
+    """
     return bytes_per_chunk_kv(geo, quant=quant, group_size=group_size) / bandwidth_bytes_per_s * overlap_factor
 
 
@@ -89,6 +101,13 @@ def calibrate_break_even_k(
 
 @dataclass(slots=True)
 class WorldKVConfig:
+    """Runtime knobs for WorldKVManager: rolling-window geometry, the break-even
+    gate, and KV quantization/commit tier.
+
+    Construct directly when the geometry is known, or via ``from_geometry`` to
+    derive ``break_even_k`` from the cost model.
+    """
+
     window_chunks: int        # W = local_attn_size (in chunks)
     sink_chunks: int          # pinned window head
     break_even_k: int         # see above; below it, don't fast-forward (falls back to normal generation, harmless)
@@ -110,7 +129,29 @@ class WorldKVConfig:
         group_size: int = 64,
         overlap_factor: float = 1.0,
         commit_tier: Tier = Tier.FLUXON_DRAM,
-    ) -> "WorldKVConfig":
+    ) -> WorldKVConfig:
+        """Build a config, computing break_even_k from the measured cost model.
+
+        Derives the per-chunk fetch time F from geometry and bandwidth, then
+        calibrates the smallest profitable prefix length K against the required
+        recompute-per-chunk micro-benchmark.
+
+        Args:
+            geo: Model KV geometry sizing one chunk's cache.
+            window_chunks: Rolling-window width W (= local_attn_size in chunks).
+            sink_chunks: Pinned window-head chunks kept forever.
+            bandwidth_bytes_per_s: Measured store->engine fetch bandwidth.
+            recompute_per_chunk_s: Measured denoising time to recompute one chunk (R).
+            fixed_overhead_s: Per-fast-forward fixed overhead (lookup/setup/first-block fetch).
+            quant: KV quantization scheme; "none" is bf16 lossless (default).
+            group_size: Quantization group size (ignored when quant="none").
+            overlap_factor: Fraction of fetch not overlappable with compute.
+            commit_tier: Storage tier new blobs are committed to.
+
+        Returns:
+            A WorldKVConfig whose break_even_k is the smallest profitable K (or
+            above max_k, meaning caching never pays off for this workload).
+        """
         F = fetch_per_chunk_s(
             geo, bandwidth_bytes_per_s, quant=quant, group_size=group_size, overlap_factor=overlap_factor
         )

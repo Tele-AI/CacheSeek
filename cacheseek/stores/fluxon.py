@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Fluxon KV store adapter.
 
 Fluxon is TeleAI's distributed KV backend, accessed via the ``fluxon_py`` Python
@@ -49,7 +51,7 @@ otherwise a strict Result raises on destruction.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -61,9 +63,23 @@ class FluxonKVStore:
 
     def __init__(
         self,
-        config_path: Optional[str] = None,
-        store: Optional[Any] = None,
+        config_path: str | None = None,
+        store: Any | None = None,
     ) -> None:
+        """Construct the adapter from a Fluxon config or an injected raw store.
+
+        Args:
+            config_path: Path to a Fluxon YAML config used to build a new store.
+                Required unless ``store`` is given.
+            store: An already-constructed raw Fluxon store to wrap (singleton
+                case); when provided, ``config_path`` is ignored and no import
+                is performed.
+
+        Raises:
+            ValueError: Neither ``config_path`` nor ``store`` was supplied.
+            ImportError: The Fluxon Python API could not be imported.
+            RuntimeError: Store construction failed for the given config.
+        """
         if store is not None:
             # Inject an already-constructed raw store (singleton case; skips a
             # redundant import).
@@ -86,7 +102,12 @@ class FluxonKVStore:
             )
         self._store = store_obj
 
-    def get(self, key: str) -> Optional[bytes]:
+    def get(self, key: str) -> bytes | None:
+        """Fetch the value bytes for ``key``, or None on a cache miss.
+
+        KeyNotFound from the backend is mapped to a miss (None); any other
+        backend failure is wrapped and re-raised as RuntimeError.
+        """
         try:
             r = self._store.get(key)
             fut = self._unwrap_result_ok(r, op="get")
@@ -117,6 +138,10 @@ class FluxonKVStore:
             raise RuntimeError(f"FluxonKV.get failed key={key!r}: {exc}") from exc
 
     def put(self, key: str, value: bytes) -> None:
+        """Store ``value`` bytes under ``key``, waiting for the write to complete.
+
+        Any backend failure is wrapped and re-raised as RuntimeError.
+        """
         try:
             # Fluxon put takes a flat dict; store the bytes under the fixed field key.
             res = self._store.put(key, {self._BYTES_FIELD_KEY: value})
@@ -134,6 +159,11 @@ class FluxonKVStore:
             raise RuntimeError(f"FluxonKV.put failed key={key!r}: {exc}") from exc
 
     def remove(self, key: str) -> None:
+        """Delete ``key`` from the backend; removing a missing key is a no-op.
+
+        Any non-KeyNotFound backend failure is wrapped and re-raised as
+        RuntimeError.
+        """
         try:
             res = self._store.remove(key)
             ok = self._unwrap_result_ok(res, op="remove")
@@ -165,6 +195,12 @@ class FluxonKVStore:
     # hence .detach().cpu().contiguous() before put.
     # ------------------------------------------------------------------
     def put_tensor(self, key: str, tensor: Any) -> None:
+        """Store ``tensor`` under ``key`` via DLPack — no pickle, no Python bytes.
+
+        The tensor is moved to CPU and made C-contiguous (DLPack constraints)
+        before its DLPack pointer is handed to Fluxon. Any backend failure is
+        wrapped and re-raised as RuntimeError.
+        """
         import torch  # noqa: F401  (lazy — heavy dep stays out of import time)
 
         try:
@@ -191,7 +227,25 @@ class FluxonKVStore:
         shape: tuple[int, ...],
         dtype: Any,
         device: Any = None,
-    ) -> Optional[Any]:
+    ) -> Any | None:
+        """Fetch a tensor for ``key``, or None on a cache miss.
+
+        On a DLPack payload, materializes an owned CPU tensor via
+        ``from_dlpack(...).clone()`` so it outlives the backend MemHolder. On a
+        raw-bytes payload, reinterprets the bytes using ``dtype`` and ``shape``.
+        ``device``, if given, moves the result onto that device.
+
+        Args:
+            key: Store key to read.
+            shape: Target tensor shape, used to reshape a raw-bytes payload.
+            dtype: torch dtype used to reinterpret a raw-bytes payload.
+            device: Optional device to move the returned tensor onto.
+
+        Raises:
+            RuntimeError: Any backend failure other than a key-not-found miss
+                (which returns None). Every error — including an unexpected
+                payload type — is wrapped as RuntimeError, never propagated raw.
+        """
         import torch
 
         try:
@@ -244,8 +298,25 @@ class FluxonKVStore:
         self,
         value_obj: Any,
         *,
-        key: Optional[str] = None,
-    ) -> Optional[bytes]:
+        key: str | None = None,
+    ) -> bytes | None:
+        """Coerce a Fluxon get() value into raw bytes (or None).
+
+        Accepts a bytes-like value directly, or a MemHolder whose ``access()``
+        returns a dict carrying the bytes under the fixed field key.
+
+        Args:
+            value_obj: The object returned by the resolved get() future.
+            key: Optional key, included in error messages for context.
+
+        Returns:
+            The value bytes, or None if ``value_obj`` is None.
+
+        Raises:
+            TypeError: ``value_obj`` lacks a callable ``access()``, its payload
+                is not a dict, or the payload's bytes field is not bytes-like.
+            RuntimeError: ``access()`` raised or returned an error Result.
+        """
         if value_obj is None:
             return None
         if isinstance(value_obj, (bytes, bytearray, memoryview)):

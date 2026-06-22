@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Discriminators for the Fluxon self-KV bandwidth conclusion.
 
 Settles whether raw's restore LOSS is fundamental or two removable confounds:

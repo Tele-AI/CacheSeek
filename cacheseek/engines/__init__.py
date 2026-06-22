@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """engines — facade for the engine-integration boundary.
 
   telefuser_lingbot   exact_prefix LingBot binding (hook-level, duck-typed)

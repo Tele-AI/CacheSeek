@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """AuditLog Protocol — append-only event stream."""
 
 from __future__ import annotations
@@ -24,7 +26,23 @@ class AuditLog(Protocol):
       should keep the buffer private and flush under an internal lock.
     """
 
-    def record(self, event_type: str, payload: dict) -> None: ...
+    def record(self, event_type: str, payload: dict) -> None:
+        """Append one event to the audit stream.
+
+        Fire-and-forget and best-effort: a failure to record must not break the
+        caller's hot path. Implementations may buffer writes but must ensure
+        each call is atomic and ordering-stable across concurrent callers.
+        ``payload`` should be JSON-serializable; for the well-known
+        ``event_type`` strings, its shape mirrors the corresponding event
+        dataclass in this module (e.g. ``HitPairEvent``,
+        ``SimilarityScoreEvent``).
+
+        Args:
+            event_type: Event category tag (e.g. ``"hit_pair"``,
+                ``"similarity_scores"``).
+            payload: Event data to persist alongside ``event_type``.
+        """
+        ...
 
 
 # Common event-type schemas (informational dataclasses).

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Audit log backends — append-only event stream.
 
 Alpha default: ``JSONLAuditLog`` (one JSON object per line, written via

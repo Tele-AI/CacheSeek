@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
 """Encoder backends — prompt / video → vector and reranker scoring.
 
 Implementations are lazy-loaded so ``torch`` / ``transformers`` are only
