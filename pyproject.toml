@@ -41,3 +41,20 @@ markers = [
     "smoke: fast import/config/script checks that validate local package wiring",
     "e2e: end-to-end lifecycle checks; external variants may require opt-in infrastructure",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# Vendored upstream model code and one-off probe/experiment scripts are excluded
+# from lint (mirror upstream verbatim / not shipped library code).
+extend-exclude = ["cacheseek/reuse/approximate/models_src", "benchmarks", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+# Line length is enforced by `ruff format`, not the linter; docstring/comment
+# style is by convention (CONTRIBUTING.md), not pydocstyle "D" codes — matching
+# vLLM / SGLang, which lint almost no docstring rules.
+ignore = ["E501"]
+
+[tool.ruff.format]
+docstring-code-format = true
