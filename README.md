@@ -72,8 +72,8 @@ This exact path powers three world-model serving patterns:
 
 | | | | |
 |:---:|:---:|:---:|:---:|
-| ![baseline 1](./docs/assets/examples/1-baseline.gif) | ![baseline 2](./docs/assets/examples/2-baseline.gif) | ![baseline 3](./docs/assets/examples/3-baseline.gif) | ![baseline 4](./docs/assets/examples/4-baseline.gif) |
-| ![cache 1](./docs/assets/examples/1-cache.gif) | ![cache 2](./docs/assets/examples/2-cache.gif) | ![cache 3](./docs/assets/examples/3-cache.gif) | ![cache 4](./docs/assets/examples/4-cache.gif) |
+| ![robot baseline](./docs/assets/examples/robot-baseline.gif) | ![balloon baseline](./docs/assets/examples/balloon-baseline.gif) | ![kite baseline](./docs/assets/examples/kite-baseline.gif) | ![umbrella baseline](./docs/assets/examples/umbrella-baseline.gif) |
+| ![robot cache](./docs/assets/examples/robot-cache.gif) | ![balloon cache](./docs/assets/examples/balloon-cache.gif) | ![kite cache](./docs/assets/examples/kite-cache.gif) | ![umbrella cache](./docs/assets/examples/umbrella-cache.gif) |
 
 <p align="center"><em>Wan2.2-14B T2V on 2×80GB Hopper. Top row: a request generated cold, full denoise (the donor). Bottom row: a near-duplicate follow-up request — a cache hit that reused the donor's early-denoise latents and skipped the first K steps. One scene per column.</em></p>
 
