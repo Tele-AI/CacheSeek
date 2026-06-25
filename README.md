@@ -70,17 +70,12 @@ This exact path powers three world-model serving patterns:
 
 **Lossy.** When a new request is *semantically close* to one served before, CacheSeek loads the donor's early-denoise latents and **skips the first K denoise steps** (`SkipStep`). The hit decision is prompt / video embedding → ANN retrieval → rerank gate. **26–33% end-to-end latency reduction** on Wan2.2-14B, and it stacks on top of in-request caches (cache-dit / DeepCache / TeaCache) and TeleFuser AdaTaylor. → `cacheseek/reuse/approximate`
 
-| | | |
-|:---:|:---:|:---:|
-| ![sidewalk donor](./docs/assets/examples/sidewalk-baseline.gif) | ![hospital donor](./docs/assets/examples/hospital-baseline.gif) | ![tray donor](./docs/assets/examples/tray-baseline.gif) |
-| ![sidewalk cache](./docs/assets/examples/sidewalk-cache.gif) | ![hospital cache](./docs/assets/examples/hospital-cache.gif) | ![tray cache](./docs/assets/examples/tray-cache.gif) |
+| | | | |
+|:---:|:---:|:---:|:---:|
+| ![sidewalk donor](./docs/assets/examples/sidewalk-baseline.gif) | ![tray donor](./docs/assets/examples/tray-baseline.gif) | ![apple donor](./docs/assets/examples/apple-baseline.gif) | ![flowers donor](./docs/assets/examples/flowers-baseline.gif) |
+| ![sidewalk cache](./docs/assets/examples/sidewalk-cache.gif) | ![tray cache](./docs/assets/examples/tray-cache.gif) | ![apple cache](./docs/assets/examples/apple-cache.gif) | ![flowers cache](./docs/assets/examples/flowers-cache.gif) |
 
-| | | |
-|:---:|:---:|:---:|
-| ![apple donor](./docs/assets/examples/apple-baseline.gif) | ![flowers donor](./docs/assets/examples/flowers-baseline.gif) | ![sphere donor](./docs/assets/examples/sphere-baseline.gif) |
-| ![apple cache](./docs/assets/examples/apple-cache.gif) | ![flowers cache](./docs/assets/examples/flowers-cache.gif) | ![sphere cache](./docs/assets/examples/sphere-cache.gif) |
-
-<p align="center"><em>Wan2.2-14B T2V on 2×80GB Hopper. In each column the top clip is generated cold (full denoise); the bottom is a follow-up request served from cache — it reused the top as donor (early-denoise latents, skipping the first K steps) and re-rendered the same scene with a camera / style shift. Embodied-AI / world-model scenes: sidewalk robot, hospital-corridor delivery, kitchen tray, table pick, flower arranging, dexterous sphere.</em></p>
+<p align="center"><em>Wan2.2-14B T2V on 2×80GB Hopper. In each column the top clip is generated cold (full denoise); the bottom is a follow-up request served from cache — it reused the top as donor (early-denoise latents, skipping the first K steps) and re-rendered the same scene with a camera / style shift. Embodied-AI / world-model scenes: sidewalk robot, kitchen tray, table pick, flower arranging.</em></p>
 
 Both families persist to **Fluxon** (distributed) or local disk; standardized migration + breakpoint-resume interfaces let long-horizon sessions route across instances instead of pinning a single GPU.
 
