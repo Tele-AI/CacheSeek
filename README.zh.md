@@ -70,12 +70,17 @@ CacheSeek 是推理引擎与分布式存储之间的缓存**中间层**，把跨
 
 **有损。** 当新请求与历史*语义相近*时，CacheSeek 载入 donor 的早期去噪 latent 并**跳过前 K 个去噪步**（`SkipStep`）。命中判定 = prompt / 视频 embedding → ANN 检索 → rerank 闸门。Wan2.2-14B 上**端到端时延降低 26–33%**，且可叠加在请求内缓存（cache-dit / DeepCache / TeaCache）与 TeleFuser AdaTaylor 之上。→ `cacheseek/reuse/approximate`
 
-| | | | |
-|:---:|:---:|:---:|:---:|
-| ![robot baseline](./docs/assets/examples/robot-baseline.gif) | ![balloon baseline](./docs/assets/examples/balloon-baseline.gif) | ![kite baseline](./docs/assets/examples/kite-baseline.gif) | ![umbrella baseline](./docs/assets/examples/umbrella-baseline.gif) |
-| ![robot cache](./docs/assets/examples/robot-cache.gif) | ![balloon cache](./docs/assets/examples/balloon-cache.gif) | ![kite cache](./docs/assets/examples/kite-cache.gif) | ![umbrella cache](./docs/assets/examples/umbrella-cache.gif) |
+| | | |
+|:---:|:---:|:---:|
+| ![sidewalk donor](./docs/assets/examples/sidewalk-baseline.gif) | ![hospital donor](./docs/assets/examples/hospital-baseline.gif) | ![tray donor](./docs/assets/examples/tray-baseline.gif) |
+| ![sidewalk cache](./docs/assets/examples/sidewalk-cache.gif) | ![hospital cache](./docs/assets/examples/hospital-cache.gif) | ![tray cache](./docs/assets/examples/tray-cache.gif) |
 
-<p align="center"><em>Wan2.2-14B T2V，2×80GB Hopper。上排：冷启动完整去噪（donor）。下排：近似的后续请求 —— 命中缓存、复用 donor 的早期去噪 latent 并跳过前 K 步。每列一个场景。</em></p>
+| | | |
+|:---:|:---:|:---:|
+| ![apple donor](./docs/assets/examples/apple-baseline.gif) | ![flowers donor](./docs/assets/examples/flowers-baseline.gif) | ![sphere donor](./docs/assets/examples/sphere-baseline.gif) |
+| ![apple cache](./docs/assets/examples/apple-cache.gif) | ![flowers cache](./docs/assets/examples/flowers-cache.gif) | ![sphere cache](./docs/assets/examples/sphere-cache.gif) |
+
+<p align="center"><em>Wan2.2-14B T2V，2×80GB Hopper。每列上面是冷启动完整去噪的原片，下面是命中缓存的后续请求 —— 复用上面那条作 donor（早期去噪 latent、跳过前 K 步），同场景重渲并带镜头 / 风格变化。具身 / 世界模型场景：街道机器人、医院走廊配送、厨房端盘、桌面抓取、插花、灵巧手转球。</em></p>
 
 两类复用都可持久化到 **Fluxon**（分布式）或本地磁盘；标准化的迁移 + 断点恢复接口让长程会话在实例间路由，而不必绑定单卡。
 
