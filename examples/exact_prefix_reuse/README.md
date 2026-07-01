@@ -64,13 +64,14 @@ are correctly *burned* and the rolling KV ring is reassembled to the exact
 physical layout a cold run would have had — without it, replay silently diverges.
 
 ```bash
-# Prerequisite: a TeleFuser checkout with the world-kv pipeline hooks
-export TELEFUSER=/path/to/telefuser-internal        # auto-added to sys.path by the driver
+# Runs from TeleFuser's venv (the driver imports the telefuser world-kv pipeline).
+# Outside that venv, set TELEFUSER=/path/to/telefuser-internal and the driver adds
+# the checkout to sys.path — but that only supplies the source, not TeleFuser's deps.
 export LINGBOT_WORLD_CHECKPOINT_DIR=/path/to/lingbot-world-base-cam
 export ASSETS=/path/to/lingbot-world/examples/00    # image.jpg + poses.npy + intrinsics.npy
 ulimit -n 65536
 
-CUDA_VISIBLE_DEVICES=0 python examples/exact_prefix_reuse/e2e_telefuser_lingbot.py \
+CUDA_VISIBLE_DEVICES=0 <telefuser>/.venv/bin/python examples/exact_prefix_reuse/e2e_telefuser_lingbot.py \
   --frame-num 37 --prefix-chunks 2 \
   --image-path $ASSETS/image.jpg --action-path $ASSETS/ \
   --out-dir /tmp/worldkv_e2e
