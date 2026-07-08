@@ -69,8 +69,8 @@ def make_runtime(seed: int, actions: list[int]) -> SimpleNamespace:
             {
                 "k": torch.zeros((1, KV_TOKENS, HEADS, HEAD_DIM)),
                 "v": torch.zeros((1, KV_TOKENS, HEADS, HEAD_DIM)),
-                "global_end_index": torch.tensor([0]),
-                "local_end_index": torch.tensor([0]),
+                "global_end_index": 0,
+                "local_end_index": 0,
             }
             for _ in range(N_LAYERS)
         ],
@@ -89,8 +89,8 @@ def kv_write(kv: dict, k_new: torch.Tensor, v_new: torch.Tensor, current_start: 
     (lingbot_world_fast_dit.py:108-145)."""
     num_new = k_new.shape[1]
     current_end = current_start + num_new
-    global_end = int(kv["global_end_index"][0])
-    local_end = int(kv["local_end_index"][0])
+    global_end = int(kv["global_end_index"])
+    local_end = int(kv["local_end_index"])
     if current_end > global_end and num_new + local_end > KV_TOKENS:
         evicted = num_new + local_end - KV_TOKENS
         rolled = local_end - evicted - SINK_TOKENS
@@ -106,8 +106,8 @@ def kv_write(kv: dict, k_new: torch.Tensor, v_new: torch.Tensor, current_start: 
     local_start = local_end - num_new
     kv["k"][:, local_start:local_end] = k_new
     kv["v"][:, local_start:local_end] = v_new
-    kv["global_end_index"][0] = current_end
-    kv["local_end_index"][0] = local_end
+    kv["global_end_index"] = current_end
+    kv["local_end_index"] = local_end
 
 
 def fake_denoise(runtime: SimpleNamespace, idx: int) -> torch.Tensor:
@@ -134,7 +134,7 @@ def snapshot(runtime: SimpleNamespace) -> list[dict]:
     return [
         {
             "k": kv["k"].clone(), "v": kv["v"].clone(),
-            "ge": int(kv["global_end_index"][0]), "le": int(kv["local_end_index"][0]),
+            "ge": int(kv["global_end_index"]), "le": int(kv["local_end_index"]),
         }
         for kv in runtime.self_kv_cache
     ]
@@ -182,8 +182,8 @@ def test_warm_ring_equals_cold_ring_all_resume_points():
         assert b.last_fast_forward == K, f"K={K}: matched {b.last_fast_forward}"
         for layer, (kv, r) in enumerate(zip(rt.self_kv_cache, snaps[K], strict=False)):
             le = r["le"]
-            assert int(kv["local_end_index"][0]) == le, f"K={K} layer{layer} local_end"
-            assert int(kv["global_end_index"][0]) == r["ge"], f"K={K} layer{layer} global_end"
+            assert int(kv["local_end_index"]) == le, f"K={K} layer{layer} local_end"
+            assert int(kv["global_end_index"]) == r["ge"], f"K={K} layer{layer} global_end"
             assert torch.equal(kv["k"][:, :le], r["k"][:, :le]), f"K={K} layer{layer} k ring"
             assert torch.equal(kv["v"][:, :le], r["v"][:, :le]), f"K={K} layer{layer} v ring"
 
@@ -206,7 +206,7 @@ def test_branch_resume_rng_aligned():
     for i in (2, 3):
         assert torch.equal(out_warm[i], out_cold[i]), f"chunk {i} diverged: RNG misaligned"
     for lw, lc in zip(rt_warm.self_kv_cache, rt_cold.self_kv_cache, strict=False):
-        le = int(lc["local_end_index"][0])
+        le = int(lc["local_end_index"])
         assert torch.equal(lw["k"][:, :le], lc["k"][:, :le])  # ring also matches after continuation
 
     # After branch write-back, both paths hit the full chain.
