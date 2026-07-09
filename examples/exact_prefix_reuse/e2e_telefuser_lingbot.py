@@ -69,8 +69,7 @@ from telefuser.pipelines.lingbot_world_fast import (
 from cacheseek.reuse.exact_prefix import NamespaceForest, WorldKVManager
 from cacheseek.reuse.exact_prefix.telefuser_lingbot import (
     LingBotWorldKVBinding,
-    make_full_kv_config,
-    make_rolling_config,
+    make_world_kv_config,
 )
 from cacheseek.stores import InMemoryTierStore
 
@@ -245,19 +244,13 @@ def main() -> int:
 
     def fresh_stack():
         forest = NamespaceForest()
-        if cfg.local_attn_size == -1:
-            world_kv_cfg = make_full_kv_config(break_even_k=1)
-        else:
-            world_kv_cfg = make_rolling_config(
-                local_attn_size=cfg.local_attn_size,
-                sink_size=cfg.sink_size,
-                chunk_size=3,
-                break_even_k=1
-            )
-
         mgr = WorldKVManager(
             forest, shared_store,
-            world_kv_cfg
+            make_world_kv_config(
+                local_attn_size=cfg.local_attn_size,
+                sink_size=cfg.sink_size,
+                chunk_size=3
+            ),
         )
         return forest, mgr
 

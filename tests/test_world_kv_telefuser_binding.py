@@ -29,7 +29,7 @@ from cacheseek.reuse.exact_prefix import (  # noqa: E402
 )
 from cacheseek.reuse.exact_prefix.telefuser_lingbot import (  # noqa: E402
     LingBotWorldKVBinding,
-    make_rolling_config,
+    make_world_kv_config,
 )
 
 # Tiny geometry: chunk=3 frames, frame_tokens=2; window L=7 frames including
@@ -159,7 +159,7 @@ def run_session(binding, runtime, session, *, snapshots: list | None = None):
 
 def make_stack():
     forest = NamespaceForest()
-    cfg = make_rolling_config(local_attn_size=LOCAL_ATTN, sink_size=SINK, chunk_size=CHUNK_FRAMES)
+    cfg = make_world_kv_config(local_attn_size=LOCAL_ATTN, sink_size=SINK, chunk_size=CHUNK_FRAMES)
     return forest, WorldKVManager(forest, InMemoryTierStore(), cfg)
 
 

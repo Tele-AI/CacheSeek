@@ -50,27 +50,36 @@ from .trie import NamespaceForest, TrieNode, load_forest_snapshot, save_forest_s
 from .types import ActionKey
 
 
-def make_full_kv_config(*, break_even_k: int = 1) -> WorldKVConfig:
-    """Full-length KV (local_attn_size=-1) => materialization needs the entire
-    prefix."""
-    return WorldKVConfig(
-        window_chunks=1_000_000, sink_chunks=1, break_even_k=break_even_k
-    )
-
-
-def make_rolling_config(
+def make_world_kv_config(
     *,
     local_attn_size: int = 7,  # latent frames, incl. sink (matches TeleFuser pipeline config)
     sink_size: int = 3,  # latent frames
     chunk_size: int = 3,  # latent frames per chunk
     break_even_k: int = 1,
 ) -> WorldKVConfig:
-    """Rolling window: materialization needs only the sink chunk plus the chunks
-    covering the most recent (L-S) frames -- O(W) rather than O(K)."""
-    recent_frames = max(local_attn_size - sink_size, 1)
+    """Build WorldKVConfig from TeleFuser LingBot KV geometry.
+
+    Uses local_attn_size=-1 for full-length KV. Positive values for
+    rolling KV.
+
+    Rolling window: materialization needs only the sink chunk plus the chunks
+    covering the most recent (L-S) frames -- O(W) rather than O(K).
+    """
+    if local_attn_size == -1:
+        window_chunks = 1_000_000
+        sink_chunks = 1
+    elif local_attn_size > 0:
+        recent_frames = max(local_attn_size - sink_size, 1)
+
+        window_chunks=-(-recent_frames // chunk_size)  # ceil
+        sink_chunks=-(-sink_size // chunk_size)
+    else:
+        raise ValueError(f"local_attn_size must be -1 for full KV and positive "
+                         f"for rolling, got {local_attn_size}")
+    
     return WorldKVConfig(
-        window_chunks=-(-recent_frames // chunk_size),  # ceil
-        sink_chunks=-(-sink_size // chunk_size),
+        window_chunks=window_chunks,
+        sink_chunks=sink_chunks,
         break_even_k=break_even_k,
     )
 
