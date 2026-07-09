@@ -222,8 +222,8 @@ class _RingKVWindow:
         rt = self._rt
         global_end = (depth + 1) * rt.chunk_size * rt.frame_tokens
         for kv in rt.self_kv_cache:
-            kv["global_end_index"][0] = global_end
-            kv["local_end_index"][0] = self._local_end_tokens
+            kv["global_end_index"] = global_end
+            kv["local_end_index"] = self._local_end_tokens
 
 
 class LingBotWorldKVBinding:
@@ -376,7 +376,7 @@ class LingBotWorldKVBinding:
             # In rolling mode this chunk's clean KV sits at the physical tail
             # [local_end-ct : local_end] (logical position idx*ct holds only in
             # full-length mode); local_end was just advanced by the clean rewrite.
-            e = int(kv["local_end_index"][0])
+            e = int(kv["local_end_index"])
             s = e - ct
             payload.append(
                 (
