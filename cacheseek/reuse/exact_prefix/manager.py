@@ -19,6 +19,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from cacheseek.quant import KVLayerCodec, KVQuantizedLayer, build_kv_codec_from_config
+
 from .config import WorldKVConfig
 from .trie import Namespace, NamespaceForest, PrefixMatch
 from .types import ActionKey, BlobHandle, NodeKey, RootHash, Skeleton, TrieNode
@@ -114,6 +116,7 @@ class WorldKVManager:
         self.forest = forest
         self.store = store
         self.cfg = cfg
+        self._kv_codec: KVLayerCodec | None = build_kv_codec_from_config(cfg)
         self._now = clock or (lambda: 0.0)   # injectable clock for testing/determinism
 
     # ---------------------------------------------------------------- Compute-saving entry
@@ -151,7 +154,10 @@ class WorldKVManager:
         try:
             n_layers = path[-1].blob.n_layers        # type: ignore[union-attr]
             for layer in range(n_layers):
-                blobs = [(n.depth, self.store.get_layer(n.blob, layer)) for n in path]
+                blobs = [
+                    (n.depth, self._decode_layer_payload(self.store.get_layer(n.blob, layer)))
+                    for n in path
+                ]
                 window.seed_layer(layer, blobs, depth=node.depth)
             window.set_resume_depth(node.depth)
             now = self._now()
@@ -173,7 +179,6 @@ class WorldKVManager:
         kv_payload: Sequence[Any],
         latent: Any,
         *,
-        nbytes: int = 0,
         n_layers: int | None = None,
     ) -> TrieNode:
         """Write on chunk finalize (write-through; the two pools are decoupled: roll-off is ingest, not evict).
@@ -190,11 +195,12 @@ class WorldKVManager:
         self.store.put_skeleton(loc + ":lat", latent)
         node.skeleton = Skeleton(latent_locator=loc + ":lat")
         # blob (heavy; store's write callback sets ready ⇒ only then published to readers)
+        stored_payload = self._encode_kv_payload(kv_payload)
         handle = BlobHandle(
             tier=self.cfg.commit_tier,
             locator=loc + ":kv",
-            nbytes=nbytes,
-            n_layers=len(kv_payload) if n_layers is None else n_layers,
+            nbytes=self._stored_payload_nbytes(stored_payload),
+            n_layers=len(stored_payload) if n_layers is None else n_layers,
             ready=False,
         )
         node.blob = handle
@@ -202,7 +208,7 @@ class WorldKVManager:
         def _publish() -> None:
             handle.ready = True
 
-        self.store.put_async(handle.locator, kv_payload, tier=self.cfg.commit_tier, on_ready=_publish)
+        self.store.put_async(handle.locator, stored_payload, tier=self.cfg.commit_tier, on_ready=_publish)
         return node
 
     # ---------------------------------------------------------------- Eviction
@@ -237,3 +243,62 @@ class WorldKVManager:
                 sinks.append(n)
             n = n.parent
         return list(reversed(sinks)) + list(reversed(recent))
+
+    def _encode_kv_payload(self, kv_payload: Sequence[Any]) -> list[Any]:
+        """Encode per-layer KV payloads when quantization is enabled."""
+
+        if self._kv_codec is None:
+            return list(kv_payload)
+
+        encoded: list[Any] = []
+        for layer, payload in enumerate(kv_payload):
+            if not isinstance(payload, (tuple, list)) or len(payload) != 2:
+                raise TypeError(
+                    "quantized WorldKV ingest expects each layer payload to be a "
+                    f"(key, value) pair; layer {layer} got {type(payload).__name__}"
+                )
+            encoded.append(self._kv_codec.encode_layer(payload[0], payload[1]))
+        return encoded
+
+    def _decode_layer_payload(self, payload: Any) -> Any:
+        """Decode one stored layer payload back to runtime KV form."""
+
+        if self._kv_codec is None:
+            return payload
+        if not isinstance(payload, KVQuantizedLayer):
+            raise TypeError(
+                "quantized WorldKV materialize expected KVQuantizedLayer from the store, "
+                f"got {type(payload).__name__}"
+            )
+        return self._kv_codec.decode_layer(payload)
+
+    def _stored_payload_nbytes(self, payload: Sequence[Any]) -> int:
+        """Best-effort byte size for accounting after optional quantization."""
+
+        total = 0
+        for layer_payload in payload:
+            total += self._object_nbytes(layer_payload)
+        return total
+
+    def _object_nbytes(self, value: Any) -> int:
+        if isinstance(value, KVQuantizedLayer):
+            return (
+                self._object_nbytes(value.key.qdata)
+                + self._object_nbytes(value.key.scale)
+                + self._object_nbytes(value.key.offset)
+                + self._object_nbytes(value.value.qdata)
+                + self._object_nbytes(value.value.scale)
+                + self._object_nbytes(value.value.offset)
+            )
+        if isinstance(value, (tuple, list)):
+            return sum(self._object_nbytes(v) for v in value)
+        if value is None:
+            return 0
+        nbytes = getattr(value, "nbytes", None)
+        if nbytes is not None:
+            return int(nbytes)
+        element_size = getattr(value, "element_size", None)
+        numel = getattr(value, "numel", None)
+        if callable(element_size) and callable(numel):
+            return int(element_size() * numel())
+        return 0

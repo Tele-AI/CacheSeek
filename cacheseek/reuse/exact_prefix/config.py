@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from cacheseek.quant import quant_fingerprint_from_config
+
 from .types import Tier
 
 # Quantization scheme. Default NONE (bf16 lossless): the impact of KV quantization on
@@ -19,8 +21,8 @@ from .types import Tier
 # is an opt-in to enable only after validation passes, not a fixed design choice.
 QUANT_BYTES_PER_ELEM = {
     "none": 2.0,       # bf16/fp16, lossless original values (default)
-    "int8": 1.0,
-    "int4": 0.5,       # enable only after a quality A/B passes
+    "kivi_int8": 1.0,
+    "kivi_int4": 0.5,
 }
 
 
@@ -113,7 +115,17 @@ class WorldKVConfig:
     break_even_k: int         # see above; below it, don't fast-forward (falls back to normal generation, harmless)
     quant: str = "none"       # default bf16 lossless; enable quantization (int8/int4) only after a quality A/B passes
     group_size: int = 64
+    kv_layout: str = "H,T,D"
+    key_group_axis: str | int = "T"
+    value_group_axis: str | int = "D"
+    scale_dtype: str = "float32"
+    offset_dtype: str = "float32"
     commit_tier: Tier = Tier.FLUXON_DRAM
+
+    def quant_fingerprint(self) -> dict[str, object]:
+        """Return quantization fields that must participate in namespace hashing."""
+
+        return quant_fingerprint_from_config(self)
 
     @classmethod
     def from_geometry(
@@ -127,6 +139,11 @@ class WorldKVConfig:
         fixed_overhead_s: float = 0.0,
         quant: str = "none",             # default lossless; quantization not assumed
         group_size: int = 64,
+        kv_layout: str = "H,T,D",
+        key_group_axis: str | int = "T",
+        value_group_axis: str | int = "D",
+        scale_dtype: str = "float32",
+        offset_dtype: str = "float32",
         overlap_factor: float = 1.0,
         commit_tier: Tier = Tier.FLUXON_DRAM,
     ) -> WorldKVConfig:
@@ -145,6 +162,11 @@ class WorldKVConfig:
             fixed_overhead_s: Per-fast-forward fixed overhead (lookup/setup/first-block fetch).
             quant: KV quantization scheme; "none" is bf16 lossless (default).
             group_size: Quantization group size (ignored when quant="none").
+            kv_layout: Logical key/value tensor layout used by the codec.
+            key_group_axis: Grouped axis for keys.
+            value_group_axis: Grouped axis for values.
+            scale_dtype: Storage dtype for quantization scale tensors.
+            offset_dtype: Storage dtype for quantization offset tensors.
             overlap_factor: Fraction of fetch not overlappable with compute.
             commit_tier: Storage tier new blobs are committed to.
 
@@ -167,5 +189,10 @@ class WorldKVConfig:
             break_even_k=k,
             quant=quant,
             group_size=group_size,
+            kv_layout=kv_layout,
+            key_group_axis=key_group_axis,
+            value_group_axis=value_group_axis,
+            scale_dtype=scale_dtype,
+            offset_dtype=offset_dtype,
             commit_tier=commit_tier,
         )

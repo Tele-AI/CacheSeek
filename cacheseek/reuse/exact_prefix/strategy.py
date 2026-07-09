@@ -64,7 +64,7 @@ class ExactPrefixStrategy:
 
         Unlike request-level save, exact_prefix writes per chunk: the chunk's KV
         payload, latent, and mount point are passed via ``ctx`` (keys ns, parent,
-        action, node_key, depth, payload, latent, optional nbytes); ``outputs`` is
+        action, node_key, depth, payload, latent); ``outputs`` is
         unused. The newly created trie node is written back to ``ctx["node"]`` so
         the caller can advance its cursor.
 
@@ -74,6 +74,6 @@ class ExactPrefixStrategy:
         assert isinstance(ctx, dict) and "ns" in ctx, "exact_prefix save requires chunk ctx"
         node = self.mgr.ingest(
             ctx["ns"], ctx["parent"], ctx["action"], ctx["node_key"], ctx["depth"],
-            ctx["payload"], ctx["latent"], nbytes=ctx.get("nbytes", 0),
+            ctx["payload"], ctx["latent"],
         )
         ctx["node"] = node
