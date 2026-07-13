@@ -1,16 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the CacheSeek project
-"""Naive PyTorch implementation of KIVI-style KV quantization.
+"""KIVI-style KV quantization with optional kernel acceleration.
 
-This codec is intentionally simple and kernel-free. It establishes the storage
-format and correctness path first. The current materialization path decodes back
-to ordinary tensors before seeding the runtime KV window.
+The CPU path remains the reference implementation and defines the payload
+format. CUDA tensors use ``cacheseek.quant.kernel`` helpers, which choose
+Triton when available and PyTorch CUDA fallback otherwise while preserving
+the same flat storage layout.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from . import kernel as _kernel
 from .types import (
     KVQuantizedLayer,
     QuantDType,
@@ -65,12 +67,30 @@ class KIVICodec:
         return QuantScheme.KIVI_INT8
 
     def encode_layer(self, key: Any, value: Any) -> KVQuantizedLayer:
+        """Encode one KV layer into a CPU-resident storage payload.
+        
+        Quantization run on the input CUDA device, but the compressed 
+        qdata/scale/offset tensors are moved to CPU before they are returned.
+        """
         return KVQuantizedLayer(
             key=self._encode_tensor(key, TensorRole.KEY),
             value=self._encode_tensor(value, TensorRole.VALUE),
         )
 
-    def decode_layer(self, payload: KVQuantizedLayer) -> tuple[Any, Any]:
+    def decode_layer(
+        self,
+        payload: KVQuantizedLayer,
+        *,
+        device: Any | None = None,
+    ) -> tuple[Any, Any]:
+        """Decode one KV layer onto ``device``.
+
+        When ``device`` is omitted, decoding preserves the payload's current
+        device. Because :meth:`encode_layer` returns CPU-resident payloads,
+        the default remains backward-compatible CPU decoding. Runtime callers
+        should pass the destination KV-cache device explicitly, for example
+        ``device=window.key_cache.device``.
+        """
         if payload.key.quant.scheme != self.scheme or payload.value.quant.scheme != self.scheme:
             raise ValueError(
                 "quantized layer scheme does not match codec: "
@@ -78,8 +98,11 @@ class KIVICodec:
                 f"value={payload.value.quant.scheme.value} "
                 f"codec={self.scheme.value}"
             )
-        return self._decode_tensor(payload.key), self._decode_tensor(payload.value)
-
+        return (
+            self._decode_tensor(payload.key, device=device),
+            self._decode_tensor(payload.value, device=device),
+        )
+    
     def _encode_tensor(self, tensor: Any, role: TensorRole) -> QuantTensor:
         torch = _torch()
 
@@ -92,22 +115,30 @@ class KIVICodec:
                 f"with {len(self._layout_tokens)} axes"
             )
 
-        x = tensor.detach().to(device="cpu").contiguous()
-
+        source = tensor.detach()
         original = TensorSpec(
-            shape=tuple(int(s) for s in x.shape),
-            dtype=_dtype_name(x.dtype),
+            shape=tuple(int(s) for s in source.shape),
+            dtype=_dtype_name(source.dtype),
             layout=self.layout,
         )
 
-        group_axis = self._group_axis(role, x.ndim)
-        x_padded = _pad_to_group(
-            x.to(torch.float32),
-            axis=group_axis,
-            group_size=self.group_size,
-        )
-
-        q, scale, offset = self._quantize_grouped(x_padded, axis=group_axis)
+        group_axis = self._group_axis(role, source.ndim)
+        if getattr(source, "is_cuda", False):
+            q, scale, offset, padded_shape = _kernel.quantize_grouped(
+                source.contiguous(),
+                axis=group_axis,
+                group_size=self.group_size,
+                bits=self.bits,
+            )
+        else:
+            x = source.to(device="cpu").contiguous()
+            x_padded = _pad_to_group(
+                x.to(torch.float32),
+                axis=group_axis,
+                group_size=self.group_size,
+            )
+            q, scale, offset = self._quantize_grouped(x_padded, axis=group_axis)
+            padded_shape = tuple(int(s) for s in x_padded.shape)
 
         if self.bits == 4:
             qdata = _pack_int4_to_int32(q)
@@ -123,7 +154,7 @@ class KIVICodec:
             storage_dtype=storage_dtype,
             group_size=self.group_size,
             group_axis=group_axis,
-            padded_shape=tuple(int(s) for s in x_padded.shape),
+            padded_shape=tuple(int(s) for s in padded_shape),
             pack_order="low_to_high",
             scale_dtype=self.scale_dtype,
             offset_dtype=self.offset_dtype,
@@ -134,12 +165,17 @@ class KIVICodec:
         return QuantTensor(
             tensor=original,
             quant=quant,
-            qdata=qdata,
-            scale=scale.to(dtype=_torch_dtype(self.scale_dtype)).contiguous(),
-            offset=offset.to(dtype=_torch_dtype(self.offset_dtype)).contiguous(),
+            qdata=qdata.to(device="cpu").contiguous(),
+            scale=scale.to(device="cpu", dtype=_torch_dtype(self.scale_dtype)).contiguous(),
+            offset=offset.to(device="cpu", dtype=_torch_dtype(self.offset_dtype)).contiguous(),
         )
 
-    def _decode_tensor(self, payload: QuantTensor) -> Any:
+    def _decode_tensor(
+        self,
+        payload: QuantTensor,
+        *,
+        device: Any | None = None
+    ) -> Any:
         torch = _torch()
         quant = payload.quant
 
@@ -175,6 +211,15 @@ class KIVICodec:
                 )
 
         num_values = _numel(padded_shape)
+        target_device = payload.qdata.device if device is None else torch.device(device)
+
+
+        # Move the compact representation before dequantization. For GPU
+        # materialization this transfers int4/int8 data plus statistics rather
+        # than a full-precision KV tensor.
+        qdata = payload.qdata.to(device=target_device).contiguous()
+        scale_tensor = payload.scale.to(device=target_device).contiguous()
+        offset_tensor = payload.offset.to(device=target_device).contiguous()
 
         if quant.bits == 4:
             if quant.storage_dtype is not QuantDType.INT32_PACKED:
@@ -183,13 +228,25 @@ class KIVICodec:
                 )
             if quant.pack_order != "low_to_high":
                 raise ValueError(f"unsupported int4 pack_order={quant.pack_order!r}")
-            q = _unpack_int4_from_int32(payload.qdata, num_values).reshape(padded_shape)
+            q = _unpack_int4_from_int32(qdata, num_values).reshape(padded_shape)
         else:
             if quant.storage_dtype is not QuantDType.UINT8:
                 raise ValueError(
                     f"int8 KIVI payload must use UINT8 storage, got {quant.storage_dtype}"
                 )
-            q = payload.qdata.reshape(padded_shape)
+            q = qdata.reshape(padded_shape)
+
+        out_dtype = _torch_dtype(payload.tensor.dtype)
+        if _kernel.can_use_triton(q, scale_tensor, offset_tensor):
+            return _kernel.dequantize_grouped(
+                q,
+                scale_tensor,
+                offset_tensor,
+                axis=group_axis,
+                group_size=quant.group_size,
+                original_shape=payload.tensor.shape,
+                dtype=out_dtype,
+            )
 
         q_grouped = _reshape_grouped(
             q.to(torch.float32),
@@ -201,16 +258,17 @@ class KIVICodec:
         #   original [H,T,D], group_axis=T -> stats [H,D,num_groups]
         #   original [H,T,D], group_axis=D -> stats [H,T,num_groups]
         # Therefore they only need unsqueeze(-1), not movedim(group_axis, -1).
-        scale = _reshape_stats_for_group(payload.scale)
-        offset = _reshape_stats_for_group(payload.offset)
+        scale = _reshape_stats_for_group(scale_tensor)
+        offset = _reshape_stats_for_group(offset_tensor)
 
         decoded_grouped = q_grouped * scale.to(torch.float32) + offset.to(torch.float32)
         decoded_padded = _restore_grouped(decoded_grouped, axis=group_axis)
         decoded = _slice_to_shape(decoded_padded, payload.tensor.shape)
 
-        return decoded.to(dtype=_torch_dtype(payload.tensor.dtype)).contiguous()
+        return decoded.to(dtype=out_dtype).contiguous()
 
     def _quantize_grouped(self, tensor: Any, *, axis: int) -> tuple[Any, Any, Any]:
+        """Naive CPU implementation of KIVI quantization, called when encoding a CPU tensor."""
         torch = _torch()
 
         grouped = _reshape_grouped(tensor, axis=axis, group_size=self.group_size)
@@ -305,7 +363,7 @@ def _reshape_grouped(tensor: Any, *, axis: int, group_size: int) -> Any:
 
 
 def _reshape_stats_for_group(stats: Any) -> Any:
-    return stats.to(device="cpu").unsqueeze(-1).contiguous()
+    return stats.unsqueeze(-1).contiguous()
 
 
 def _restore_grouped(grouped: Any, *, axis: int) -> Any:
@@ -322,33 +380,11 @@ def _slice_to_shape(tensor: Any, shape: tuple[int, ...]) -> Any:
 
 
 def _pack_int4_to_int32(qdata: Any) -> Any:
-    torch = _torch()
-
-    flat = qdata.reshape(-1).to(torch.int64)
-
-    pad = (-flat.numel()) % 8
-    if pad:
-        flat = torch.cat((flat, torch.zeros(pad, dtype=flat.dtype)))
-
-    nibbles = flat.reshape(-1, 8)
-    packed = torch.zeros(nibbles.shape[0], dtype=torch.int64)
-
-    for i in range(8):
-        packed |= (nibbles[:, i] & 0xF) << (4 * i)
-
-    return packed.to(torch.int32).contiguous()
+    return _kernel.pack_int4_to_int32(qdata)
 
 
 def _unpack_int4_from_int32(packed: Any, num_values: int) -> Any:
-    torch = _torch()
-
-    words = packed.reshape(-1).to(torch.int64)
-    parts = []
-
-    for i in range(8):
-        parts.append(((words >> (4 * i)) & 0xF).to(torch.uint8))
-
-    return torch.stack(parts, dim=1).reshape(-1)[:num_values].contiguous()
+    return _kernel.unpack_int4_from_int32(packed, num_values)
 
 
 def _numel(shape: tuple[int, ...]) -> int:

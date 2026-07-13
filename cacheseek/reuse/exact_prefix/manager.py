@@ -68,6 +68,11 @@ class RollingWindow(Protocol):
     blobs are given as ``(chunk_depth, layer_payload)`` (oldest→newest); the adapter assembles them
     into the engine's own physical layout (full-length / rolling ring).
     """
+
+    @property
+    def device(self) -> Any | None:
+        """Device on which restored runtime KV tensors must reside."""
+        ...
     def seed_layer(self, layer: int, blobs: Sequence[tuple[int, Any]], depth: int) -> None:
         """Seed one attention layer's KV pool with the sink + window historical KV.
 
@@ -151,21 +156,40 @@ class WorldKVManager:
             return False
         for n in path:
             n.ref_count += 1                         # materialize in flight; eviction must not reclaim
+
         try:
-            n_layers = path[-1].blob.n_layers        # type: ignore[union-attr]
+            n_layers = path[-1].blob.n_layers  # type: ignore[union-attr]
+            # Production adapters should expose ``window.device``. ``getattr``
+            # keeps existing CPU-only test doubles backward compatible: when
+            # absent, the codec decodes on the stored payload's current device.
+            target_device = (
+                getattr(window, "device", None)
+                if self._kv_codec is not None
+                else None
+            )
+
             for layer in range(n_layers):
-                blobs = [
-                    (n.depth, self._decode_layer_payload(self.store.get_layer(n.blob, layer)))
-                    for n in path
-                ]
+                blobs: list[tuple[int, Any]] = []
+
+                for n in path:
+                    stored_payload = self.store.get_layer(n.blob, layer)
+                    runtime_payload = self._decode_layer_payload(
+                        stored_payload,
+                        device=target_device,
+                    )
+                    blobs.append((n.depth, runtime_payload))
+
                 window.seed_layer(layer, blobs, depth=node.depth)
+
             window.set_resume_depth(node.depth)
+
             now = self._now()
             for n in path:
                 n.last_access = now
         finally:
             for n in path:
                 n.ref_count -= 1
+
         return True
 
     # ---------------------------------------------------------------- Write path
@@ -197,22 +221,37 @@ class WorldKVManager:
         # blob (heavy; store's write callback sets ready ⇒ only then published to readers)
 
         def _to_cpu(t: Any) -> Any:
-            return t.detach().to("cpu").contiguous().clone() if hasattr(t, "detach") else t
-
-        def _to_encode_device(t: Any) -> Any:
+            """Copy an unquantized runtime tensor into CPU-owned storage."""
             if not hasattr(t, "detach"):
                 return t
-            t = t.detach()
-            # Quantized encode should run on GPU. If the cache slice is already
-            # CUDA, keep it there; otherwise move it once before encode.
-            if not getattr(t, "is_cuda", False):
-                t = t.to("cuda")
-            return t.contiguous()
+            return t.detach().to("cpu").contiguous().clone()
+
+        def _prepare_for_encode(t: Any) -> Any:
+            """Detach a tensor while preserving its source device.
+
+            CUDA inputs therefore use the accelerated codec path on their
+            current GPU. CPU inputs use the codec's CPU reference path. The
+            manager must not move data to the process-wide default CUDA device,
+            because that device may not match the runtime in multi-GPU setups.
+            """
+            if not hasattr(t, "detach"):
+                return t
+            return t.detach().contiguous()
 
         if self._kv_codec is None:
-            kv_payload = [tuple(_to_cpu(t) for t in p) if isinstance(p, (tuple, list)) else _to_cpu(p) for p in kv_payload]
+            kv_payload = [
+                tuple(_to_cpu(t) for t in payload)
+                if isinstance(payload, (tuple, list))
+                else _to_cpu(payload)
+                for payload in kv_payload
+            ]
         else:
-            kv_payload = [tuple(_to_encode_device(t) for t in p) for p in kv_payload]
+            kv_payload = [
+                tuple(_prepare_for_encode(t) for t in payload)
+                if isinstance(payload, (tuple, list))
+                else _prepare_for_encode(payload)
+                for payload in kv_payload
+            ]
 
         stored_payload = self._encode_kv_payload(kv_payload)
         handle = BlobHandle(
@@ -279,8 +318,21 @@ class WorldKVManager:
             encoded.append(self._kv_codec.encode_layer(payload[0], payload[1]))
         return encoded
 
-    def _decode_layer_payload(self, payload: Any) -> Any:
-        """Decode one stored layer payload back to runtime KV form."""
+    def _decode_layer_payload(
+        self,
+        payload: Any,
+        *,
+        device: Any | None = None,
+    ) -> Any:
+        """Decode one stored layer payload back to runtime KV form.
+        
+        Args:
+            payload: One layer payload returned by the tiered store.
+            device: Destination device for restored KV tensors. For quantized
+                payloads, the codec moves the compact representation to this
+                device before dequantization. Ignored when quantization is
+                disabled.
+        """
 
         if self._kv_codec is None:
             return payload
@@ -289,7 +341,7 @@ class WorldKVManager:
                 "quantized WorldKV materialize expected KVQuantizedLayer from the store, "
                 f"got {type(payload).__name__}"
             )
-        return self._kv_codec.decode_layer(payload)
+        return self._kv_codec.decode_layer(payload, device=device)
 
     def _stored_payload_nbytes(self, payload: Sequence[Any]) -> int:
         """Best-effort byte size for accounting after optional quantization."""

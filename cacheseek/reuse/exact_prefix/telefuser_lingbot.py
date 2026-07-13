@@ -203,6 +203,35 @@ class _RingKVWindow:
         self._rt = runtime
         self._local_end_tokens = 0
 
+    @property
+    def device(self) -> torch.device:
+        """Return the device on which restored runtime KV must reside.
+
+        All self-attention K/V cache tensors are expected to live on the same
+        device. The manager passes this device to the codec so compressed
+        qdata/scale/offset tensors are transferred before GPU dequantization.
+        """
+        caches = self._rt.self_kv_cache
+        if not caches:
+            raise RuntimeError(
+                "runtime.self_kv_cache is empty; cannot determine KV device"
+            )
+
+        device = caches[0]["k"].device
+
+        for layer, kv in enumerate(caches):
+            key_device = kv["k"].device
+            value_device = kv["v"].device
+
+            if key_device != device or value_device != device:
+                raise RuntimeError(
+                    "all runtime KV-cache tensors must share one device: "
+                    f"expected {device}, but layer {layer} has "
+                    f"key={key_device}, value={value_device}"
+                )
+
+        return device
+
     def _frames_to_seed(self, layer_kv: dict, depth: int) -> list[int]:
         rt = self._rt
         ft, c = rt.frame_tokens, rt.chunk_size
@@ -353,6 +382,10 @@ class LingBotWorldKVBinding:
             self.last_fast_forward = 0
             return
         hint = res.resume_hint
+
+        # _RingKVWindow exposes the actual runtime KV-cache device. The manager
+        # forwards it to the codec so compact quantized payloads are transferred
+        # before dequantization instead of restoring full KV on CPU first.
         if not self.mgr.materialize(hint.node, _RingKVWindow(runtime)):
             self._parent = self._ns.root  # incomplete window -> fall back to cold run
             self.last_fast_forward = 0
