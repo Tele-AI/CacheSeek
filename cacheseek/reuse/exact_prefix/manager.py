@@ -195,6 +195,25 @@ class WorldKVManager:
         self.store.put_skeleton(loc + ":lat", latent)
         node.skeleton = Skeleton(latent_locator=loc + ":lat")
         # blob (heavy; store's write callback sets ready ⇒ only then published to readers)
+
+        def _to_cpu(t: Any) -> Any:
+            return t.detach().to("cpu").contiguous().clone() if hasattr(t, "detach") else t
+
+        def _to_encode_device(t: Any) -> Any:
+            if not hasattr(t, "detach"):
+                return t
+            t = t.detach()
+            # Quantized encode should run on GPU. If the cache slice is already
+            # CUDA, keep it there; otherwise move it once before encode.
+            if not getattr(t, "is_cuda", False):
+                t = t.to("cuda")
+            return t.contiguous()
+
+        if self._kv_codec is None:
+            kv_payload = [tuple(_to_cpu(t) for t in p) if isinstance(p, (tuple, list)) else _to_cpu(p) for p in kv_payload]
+        else:
+            kv_payload = [tuple(_to_encode_device(t) for t in p) for p in kv_payload]
+
         stored_payload = self._encode_kv_payload(kv_payload)
         handle = BlobHandle(
             tier=self.cfg.commit_tier,

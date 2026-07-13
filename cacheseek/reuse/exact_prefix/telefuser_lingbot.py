@@ -412,8 +412,8 @@ class LingBotWorldKVBinding:
             s = e - ct
             payload.append(
                 (
-                    kv["k"][:, s:e].detach().to("cpu").clone(),
-                    kv["v"][:, s:e].detach().to("cpu").clone(),
+                    kv["k"][:, s:e].detach().contiguous(),
+                    kv["v"][:, s:e].detach().contiguous(),
                 )
             )
         latent = denoised.detach().to("cpu").clone()
