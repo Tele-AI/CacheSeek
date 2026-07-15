@@ -148,6 +148,7 @@ def run_request(pipeline, binding, frame_num: int, poses, intrinsics, *, image_p
         control_mode="cam",
         frame_num=frame_num,
         seed=SEED,
+        sammple_shift=10,  # better generation quality
         poses=poses,
         intrinsics=intrinsics,
         world_kv_binding=binding,
