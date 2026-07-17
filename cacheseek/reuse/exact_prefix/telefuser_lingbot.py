@@ -40,6 +40,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from cacheseek.quant import quant_fingerprint_from_config
 from cacheseek.service.query import CacheQuery
 
 from .config import WorldKVConfig
@@ -50,28 +51,48 @@ from .trie import NamespaceForest, TrieNode, load_forest_snapshot, save_forest_s
 from .types import ActionKey
 
 
-def make_full_kv_config(*, break_even_k: int = 1) -> WorldKVConfig:
-    """Full-length KV (local_attn_size=-1) => materialization needs the entire
-    prefix."""
-    return WorldKVConfig(
-        window_chunks=1_000_000, sink_chunks=1, break_even_k=break_even_k
-    )
-
-
-def make_rolling_config(
+def make_world_kv_config(
     *,
     local_attn_size: int = 7,  # latent frames, incl. sink (matches TeleFuser pipeline config)
     sink_size: int = 3,  # latent frames
     chunk_size: int = 3,  # latent frames per chunk
     break_even_k: int = 1,
+    quant: str = "none",
+    group_size: int = 64,
+    kv_layout: str = "B,T,H,D",
+    key_group_axis: str | int = "T",
+    value_group_axis: str | int = "D",
+    scale_dtype: str = "float32",
+    offset_dtype: str = "float32",
 ) -> WorldKVConfig:
-    """Rolling window: materialization needs only the sink chunk plus the chunks
-    covering the most recent (L-S) frames -- O(W) rather than O(K)."""
-    recent_frames = max(local_attn_size - sink_size, 1)
+    """Build WorldKVConfig from TeleFuser LingBot KV geometry.
+
+    Uses local_attn_size=-1 for full-length KV. Positive values for
+    rolling KV, where materialization needs only the sink chunk plus the chunks covering the most recent (L-S) frames -- O(W) rather than O(K).
+    """
+    if local_attn_size == -1:
+        window_chunks = 1_000_000
+        sink_chunks = 1
+    elif local_attn_size > 0:
+        recent_frames = max(local_attn_size - sink_size, 1)
+
+        window_chunks=-(-recent_frames // chunk_size)  # ceil
+        sink_chunks=-(-sink_size // chunk_size)
+    else:
+        raise ValueError(f"local_attn_size must be -1 for full KV and positive "
+                         f"for rolling, got {local_attn_size}")
+    
     return WorldKVConfig(
-        window_chunks=-(-recent_frames // chunk_size),  # ceil
-        sink_chunks=-(-sink_size // chunk_size),
+        window_chunks=window_chunks,
+        sink_chunks=sink_chunks,
         break_even_k=break_even_k,
+        quant=quant,
+        group_size=group_size,
+        kv_layout=kv_layout,
+        key_group_axis=key_group_axis,
+        value_group_axis=value_group_axis,
+        scale_dtype=scale_dtype,
+        offset_dtype=offset_dtype,
     )
 
 
@@ -88,7 +109,12 @@ SESSION_KEY_FIELDS = (
 )
 
 
-def session_root_hash(session_config: Any, *, model_fingerprint: bytes) -> bytes:
+def session_root_hash(
+    session_config: Any,
+    *,
+    model_fingerprint: bytes,
+    quant_config: Any | None = None,
+) -> bytes:
     """Compute the namespace root_hash for a TeleFuser session.
 
     Combines an image fingerprint (mode, size, raw pixel bytes), a normalized
@@ -100,6 +126,8 @@ def session_root_hash(session_config: Any, *, model_fingerprint: bytes) -> bytes
         session_config: TeleFuser session config (duck-typed; needs image, prompt,
             and the SESSION_KEY_FIELDS attributes).
         model_fingerprint: Weights/version fingerprint folded into config_blob_hash.
+        quant_config: Optional config-like object whose quantization fields are
+            folded into config_blob_hash to isolate incompatible KV payloads.
 
     Returns:
         The root_hash identifying this world.
@@ -113,6 +141,8 @@ def session_root_hash(session_config: Any, *, model_fingerprint: bytes) -> bytes
     )
     prompt_fp = sha256(b"prompt", session_config.prompt.strip().encode("utf-8"))
     blob = {f: getattr(session_config, f, None) for f in SESSION_KEY_FIELDS}
+    if quant_config is not None:
+        blob["kv_quant"] = quant_fingerprint_from_config(quant_config)
     cfg_hash = config_blob_hash(blob, weights_fingerprint=model_fingerprint)
     return root_hash(image_fp=image_fp, prompt_fp=prompt_fp, config_blob_hash=cfg_hash)
 
@@ -172,6 +202,35 @@ class _RingKVWindow:
     def __init__(self, runtime: Any) -> None:
         self._rt = runtime
         self._local_end_tokens = 0
+
+    @property
+    def device(self) -> torch.device:
+        """Return the device on which restored runtime KV must reside.
+
+        All self-attention K/V cache tensors are expected to live on the same
+        device. The manager passes this device to the codec so compressed
+        qdata/scale/offset tensors are transferred before GPU dequantization.
+        """
+        caches = self._rt.self_kv_cache
+        if not caches:
+            raise RuntimeError(
+                "runtime.self_kv_cache is empty; cannot determine KV device"
+            )
+
+        device = caches[0]["k"].device
+
+        for layer, kv in enumerate(caches):
+            key_device = kv["k"].device
+            value_device = kv["v"].device
+
+            if key_device != device or value_device != device:
+                raise RuntimeError(
+                    "all runtime KV-cache tensors must share one device: "
+                    f"expected {device}, but layer {layer} has "
+                    f"key={key_device}, value={value_device}"
+                )
+
+        return device
 
     def _frames_to_seed(self, layer_kv: dict, depth: int) -> list[int]:
         rt = self._rt
@@ -298,7 +357,9 @@ class LingBotWorldKVBinding:
         from .keys import build_action_chain
 
         root = session_root_hash(
-            session_config, model_fingerprint=self.model_fingerprint
+            session_config,
+            model_fingerprint=self.model_fingerprint,
+            quant_config=self.mgr.cfg,
         )
         self._ns = self.forest.get_or_create_namespace(root, root)
         self._actions = chunk_action_keys(runtime)
@@ -321,6 +382,10 @@ class LingBotWorldKVBinding:
             self.last_fast_forward = 0
             return
         hint = res.resume_hint
+
+        # _RingKVWindow exposes the actual runtime KV-cache device. The manager
+        # forwards it to the codec so compact quantized payloads are transferred
+        # before dequantization instead of restoring full KV on CPU first.
         if not self.mgr.materialize(hint.node, _RingKVWindow(runtime)):
             self._parent = self._ns.root  # incomplete window -> fall back to cold run
             self.last_fast_forward = 0
@@ -380,8 +445,8 @@ class LingBotWorldKVBinding:
             s = e - ct
             payload.append(
                 (
-                    kv["k"][:, s:e].detach().to("cpu").clone(),
-                    kv["v"][:, s:e].detach().to("cpu").clone(),
+                    kv["k"][:, s:e].detach().contiguous(),
+                    kv["v"][:, s:e].detach().contiguous(),
                 )
             )
         latent = denoised.detach().to("cpu").clone()
@@ -395,7 +460,6 @@ class LingBotWorldKVBinding:
             "depth": idx,
             "payload": payload,
             "latent": latent,
-            "nbytes": sum(k.nbytes + v.nbytes for k, v in payload),
         }
         asyncio.run(self.strategy.save(self._query, None, ctx))
         self._parent = ctx["node"]

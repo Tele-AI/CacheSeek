@@ -52,7 +52,7 @@ def _ingest_chain(strategy, forest, root, actions):
     for i, a in enumerate(actions):
         ctx = {
             "ns": ns, "parent": parent, "action": a, "node_key": chain[i], "depth": i,
-            "payload": [(f"k{i}", f"v{i}")], "latent": f"x0@{i}", "nbytes": 0,
+            "payload": [(f"k{i}", f"v{i}")], "latent": f"x0@{i}",
         }
         asyncio.run(strategy.save(q, None, ctx))
         parent = ctx["node"]

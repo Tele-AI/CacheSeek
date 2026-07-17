@@ -170,7 +170,7 @@ Defined in [`cacheseek/reuse/exact_prefix/config.py`](./cacheseek/reuse/exact_pr
 | `window_chunks` | `W` — the local attention window, measured in chunks |
 | `sink_chunks` | Pinned window head (the chunks at the head that are never evicted) |
 | `break_even_k` | Smallest reused-prefix length that pays off; below it, skip the cache and just generate — harmless |
-| `quant` | `none` (bf16, lossless default) / `int8` / `int4` — enable quantization only after a quality A/B passes |
+| `quant` | `none` (bf16, lossless default) / `kivi-int8` / `kivi-int4` — enable quantization only after a quality A/B passes |
 | `commit_tier` | Where committed KV lives (e.g. Fluxon DRAM) |
 
 ### Approximate reuse — `CacheConfig`
@@ -248,6 +248,7 @@ cacheseek/
 ├── cacheseek/
 │   ├── service/    ← CacheService orchestrator, CacheConfig, Protocol interfaces
 │   ├── reuse/      ← reuse strategies: approximate (video DiT) / exact_prefix (trie)
+│   ├── quant/      ← quantization methods (KIVI, etc.)
 │   ├── stores/     ← KV / tensor byte stores (memory / local_file / fluxon)
 │   ├── backends/   ← vector (faiss/qdrant), encoder (Qwen3-VL), metadata, audit
 │   ├── adapters/   ← framework adapters (telefuser)

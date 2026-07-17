@@ -86,6 +86,8 @@ and assertion outcomes.
 - `--frame-num 81 --prefix-chunks 4` — longer run, exercises multi-round rolling eviction
 - `--store localdisk --disk-root /path/on/local/nvme` — local-disk blob backend
 - `--store fluxon --fluxon-config /path/to/external_config.yaml` — Fluxon backend (stack setup: [`../../scripts/fluxon/README.md`](../../scripts/fluxon/README.md))
+- `--quant kivi_int8` or `--quant kivi_int4` — enable KIVI KV quantization for
+  exact-prefix payloads. 
 - omit `--image-path` / `--action-path` to fall back to a synthetic image + trajectory
 
 > If the `cacheseek` (or `telefuser`) in your venv is an editable install pointing

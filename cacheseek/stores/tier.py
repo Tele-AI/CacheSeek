@@ -17,10 +17,21 @@ import json
 import queue
 import threading
 from collections.abc import Callable, Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+from cacheseek.quant import (
+    KVQuantizedLayer,
+    QuantDType,
+    QuantScheme,
+    QuantTensor,
+    QuantTensorSpec,
+    TensorRole,
+    TensorSpec,
+)
 
 from .base import BlobHandle, Tier
 
@@ -137,6 +148,15 @@ class TensorStoreTierStore:
     def __init__(self, tensor_store: Any, *, async_put: bool = False, max_pending_chunks: int = 4) -> None:
         self._ts = tensor_store
         self._specs: dict[str, tuple[tuple[int, ...], str]] = {}   # key -> (shape, dtype name)
+        # Payload-level sidecars describe composite logical layer formats.
+        # Plain KV layers do not need this: their presence is inferred from
+        # ``:k`` / ``:v`` tensor keys. Quantized layers do need an explicit
+        # marker because one logical layer expands to multiple tensors
+        # (qdata/scale/offset) plus codec metadata. The sidecar key
+        # ``<locator>:L<i>:quant`` is therefore both the format discriminator
+        # and the data needed to rebuild a KVQuantizedLayer after process
+        # restart.
+        self._payload_meta: dict[str, dict[str, Any]] = {}
         self._async = async_put
         if async_put:
             self._q: queue.Queue = queue.Queue(maxsize=max_pending_chunks)
@@ -169,10 +189,109 @@ class TensorStoreTierStore:
         import torch
         return self._ts.get_tensor(key, shape=spec[0], dtype=getattr(torch, spec[1]))
 
+    def _put_meta(self, key: str, meta: dict[str, Any]) -> None:
+        """Store JSON metadata for a composite payload.
+
+        The in-memory dict is the fast same-process path. When the backing
+        tensor store also exposes bytes ``put/get`` (Fluxon and local disk do),
+        persist the same metadata as a sidecar so mixed old/new cache contents
+        remain self-describing across processes.
+        """
+        self._payload_meta[key] = meta
+        if hasattr(self._ts, "put"):
+            with contextlib.suppress(Exception):
+                self._ts.put(key, json.dumps(meta, sort_keys=True, separators=(",", ":")).encode())
+
+    def _get_meta(self, key: str) -> dict[str, Any] | None:
+        """Load composite-payload metadata, returning None for legacy/plain layers."""
+        meta = self._payload_meta.get(key)
+        if meta is not None:
+            return meta
+        if hasattr(self._ts, "get"):
+            raw = self._ts.get(key)
+            if raw is not None:
+                meta = json.loads(raw)
+                self._payload_meta[key] = meta
+                return meta
+        return None
+
+    @staticmethod
+    def _quant_tensor_meta(tensor: QuantTensor) -> dict[str, Any]:
+        tensor_meta = asdict(tensor.tensor)
+        quant_meta = asdict(tensor.quant)
+        quant_meta["role"] = tensor.quant.role.value
+        quant_meta["scheme"] = tensor.quant.scheme.value
+        quant_meta["storage_dtype"] = tensor.quant.storage_dtype.value
+        return {
+            "tensor": tensor_meta,
+            "quant": quant_meta,
+            "has_offset": tensor.offset is not None,
+        }
+
+    def _put_quant_layer(self, locator: str, layer: int, payload: KVQuantizedLayer) -> None:
+        base = self._layer_key(locator, layer)
+        self._put_one(base + ":k:qdata", payload.key.qdata)
+        self._put_one(base + ":k:scale", payload.key.scale)
+        if payload.key.offset is not None:
+            self._put_one(base + ":k:offset", payload.key.offset)
+        self._put_one(base + ":v:qdata", payload.value.qdata)
+        self._put_one(base + ":v:scale", payload.value.scale)
+        if payload.value.offset is not None:
+            self._put_one(base + ":v:offset", payload.value.offset)
+        self._put_meta(
+            base + ":quant",
+            {
+                "kind": "kv_quantized_layer",
+                "key": self._quant_tensor_meta(payload.key),
+                "value": self._quant_tensor_meta(payload.value),
+            },
+        )
+
+    def _get_quant_layer(self, locator: str, layer: int) -> KVQuantizedLayer | None:
+        base = self._layer_key(locator, layer)
+        meta = self._get_meta(base + ":quant")
+        if meta is None:
+            return None
+        return KVQuantizedLayer(
+            key=self._get_quant_tensor(base + ":k", meta["key"]),
+            value=self._get_quant_tensor(base + ":v", meta["value"]),
+        )
+
+    def _get_quant_tensor(self, key_prefix: str, meta: dict[str, Any]) -> QuantTensor:
+        tensor_meta = meta["tensor"]
+        quant_meta = meta["quant"]
+        offset = self._get_one(key_prefix + ":offset") if meta.get("has_offset") else None
+        return QuantTensor(
+            tensor=TensorSpec(
+                shape=tuple(tensor_meta["shape"]),
+                dtype=tensor_meta["dtype"],
+                layout=tensor_meta["layout"],
+            ),
+            quant=QuantTensorSpec(
+                role=TensorRole(quant_meta["role"]),
+                scheme=QuantScheme(quant_meta["scheme"]),
+                bits=quant_meta["bits"],
+                storage_dtype=QuantDType(quant_meta["storage_dtype"]),
+                group_size=quant_meta["group_size"],
+                group_axis=quant_meta["group_axis"],
+                padded_shape=tuple(quant_meta["padded_shape"]) if quant_meta["padded_shape"] is not None else None,
+                pack_order=quant_meta["pack_order"],
+                scale_dtype=quant_meta["scale_dtype"],
+                offset_dtype=quant_meta["offset_dtype"],
+                offset_kind=quant_meta["offset_kind"],
+                symmetric=quant_meta["symmetric"],
+            ),
+            qdata=self._get_one(key_prefix + ":qdata"),
+            scale=self._get_one(key_prefix + ":scale"),
+            offset=offset,
+        )
+
     # ----------------------------------------------------------------- async write
     def _do_put_payload(self, locator: str, payload: Sequence[Any]) -> None:
         for i, p in enumerate(payload):
-            if isinstance(p, (tuple, list)) and len(p) == 2:
+            if isinstance(p, KVQuantizedLayer):
+                self._put_quant_layer(locator, i, p)
+            elif isinstance(p, (tuple, list)) and len(p) == 2:
                 # per-layer payload = (k, v) tensor pair -> two keys (put_tensor
                 # takes a single tensor)
                 self._put_one(self._layer_key(locator, i) + ":k", p[0])
@@ -222,7 +341,17 @@ class TensorStoreTierStore:
             on_ready()
 
     def get_layer(self, handle: BlobHandle, layer: int) -> Any:
-        """Read back one layer, returning a ``(k, v)`` pair if stored as one, else a single tensor."""
+        """Read back one logical layer.
+
+        Format detection is sidecar-first:
+        - ``<locator>:L<i>:quant`` present means the layer is quantized and must
+          be rebuilt as KVQuantizedLayer from qdata/scale/offset tensors.
+        - no quant sidecar means legacy/plain storage; fall back to the original
+          ``:k`` / ``:v`` tensor-pair layout.
+        """
+        quantized = self._get_quant_layer(handle.locator, layer)
+        if quantized is not None:
+            return quantized
         k = self._get_one(self._layer_key(handle.locator, layer) + ":k")
         if k is not None:
             v = self._get_one(self._layer_key(handle.locator, layer) + ":v")

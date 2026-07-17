@@ -69,8 +69,7 @@ from telefuser.pipelines.lingbot_world_fast import (
 from cacheseek.reuse.exact_prefix import NamespaceForest, WorldKVManager
 from cacheseek.reuse.exact_prefix.telefuser_lingbot import (
     LingBotWorldKVBinding,
-    make_full_kv_config,
-    make_rolling_config,
+    make_world_kv_config,
 )
 from cacheseek.stores import InMemoryTierStore
 
@@ -86,6 +85,14 @@ if _WORLDKV_ROOTS:                       # self-check: imports must resolve to o
 PROMPT = "a quiet stone courtyard, ancient walls, soft afternoon light"
 SEED = 42
 ORIG_H, ORIG_W = 480, 832
+
+
+def parse_group_axis(axis: str) -> str | int:
+    """Accept layout labels such as T/D or integer axis indexes from CLI."""
+    axis = axis.strip()
+    if axis.lstrip("-").isdigit():
+        return int(axis)
+    return axis
 
 
 def load_image(image_path: str) -> Image.Image:
@@ -148,6 +155,7 @@ def run_request(pipeline, binding, frame_num: int, poses, intrinsics, *, image_p
         control_mode="cam",
         frame_num=frame_num,
         seed=SEED,
+        sammple_shift=10,  # better generation quality
         poses=poses,
         intrinsics=intrinsics,
         world_kv_binding=binding,
@@ -200,6 +208,20 @@ def main() -> int:
     ap.add_argument("--disk-root", type=str, default="/tmp/worldkv_diskstore", help="root dir for the localdisk backend (should be real local disk)")
     ap.add_argument("--repeat", type=int, default=1,
                     help="number of A/B/C/D loop iterations (weights loaded once; for soak testing, each round uses an independent cache stack)")
+    ap.add_argument("--quant", type=str, default="none", choices=["none", "kivi_int8", "kivi_int4"],
+                    help="optional KIVI KV quantization for exact-prefix world-kv payloads")
+    ap.add_argument("--group-size", type=int, default=64,
+                    help="KIVI quantization group size when --quant is enabled")
+    ap.add_argument("--kv-layout", type=str, default="B,T,H,D",
+                    help="logical layout of TeleFuser self-attention KV tensors; LingBot uses (batch, tokens, heads, head_dim)")
+    ap.add_argument("--key-group-axis", type=str, default="T",
+                    help="KIVI grouped axis for keys, as a layout label or integer axis")
+    ap.add_argument("--value-group-axis", type=str, default="D",
+                    help="KIVI grouped axis for values, as a layout label or integer axis")
+    ap.add_argument("--scale-dtype", type=str, default="float32",
+                    help="dtype used to store KIVI scale tensors")
+    ap.add_argument("--offset-dtype", type=str, default="float32",
+                    help="dtype used to store KIVI offset tensors")
     ap.add_argument("--aux-device", type=str, default="",
                     help="two-GPU usage: place the T5 text encoder (~11GB) + VAE on this device (e.g. cuda:1), keep the DiT on the main device. "
                          "Note: the LingBot pipeline's DiT itself has no tensor parallelism — two GPUs split memory placement, not compute")
@@ -242,16 +264,25 @@ def main() -> int:
     # collide); the empty-cache cold run is guaranteed by a fresh forest (trie index) --
     # old payloads in the store are unreachable without an index.
     shared_store = make_store()
+    key_group_axis = parse_group_axis(args.key_group_axis)
+    value_group_axis = parse_group_axis(args.value_group_axis)
 
     def fresh_stack():
         forest = NamespaceForest()
-        world_kv_cfg = (
-            make_full_kv_config()
-            if int(cfg.local_attn_size) == -1
-            else make_rolling_config(local_attn_size=cfg.local_attn_size, sink_size=cfg.sink_size, chunk_size=3)
-        )
         mgr = WorldKVManager(
-            forest, shared_store, world_kv_cfg,
+            forest, shared_store,
+            make_world_kv_config(
+                local_attn_size=cfg.local_attn_size,
+                sink_size=cfg.sink_size,
+                chunk_size=3,
+                quant=args.quant,
+                group_size=args.group_size,
+                kv_layout=args.kv_layout,
+                key_group_axis=key_group_axis,
+                value_group_axis=value_group_axis,
+                scale_dtype=args.scale_dtype,
+                offset_dtype=args.offset_dtype,
+            ),
         )
         return forest, mgr
 
@@ -288,6 +319,15 @@ def main() -> int:
     manifest = {
         "frame_num": args.frame_num, "prefix_chunks": args.prefix_chunks, "seed": SEED, "store": args.store,
         "pipeline": {"local_attn_size": cfg.local_attn_size, "sink_size": cfg.sink_size},
+        "world_kv_quant": {
+            "quant": args.quant,
+            "group_size": args.group_size,
+            "kv_layout": args.kv_layout,
+            "key_group_axis": key_group_axis,
+            "value_group_axis": value_group_axis,
+            "scale_dtype": args.scale_dtype,
+            "offset_dtype": args.offset_dtype,
+        },
         "torch": torch.__version__, "device": torch.cuda.get_device_name(0),
         "results": results, "checks": checks, "all_pass": all(checks.values()),
     }
