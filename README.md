@@ -148,13 +148,14 @@ Run it end to end with TeleFuser (needs GPU + Wan2.2-14B + Qwen3-VL weights):
 ```bash
 <telefuser>/.venv/bin/pip install -e ".[all,dev]"    # 1. install INTO TeleFuser's venv, with all backends + test deps (see notes)
 <telefuser>/.venv/bin/python -c "import cacheseek, torch; print(torch.__version__)"  # 1b. verify (expect 2.7.0+cu126)
-pytest -m smoke                                      # 2. local check
+<telefuser>/.venv/bin/python -m pytest -m smoke      # 2. local check (requires the dev extra)
 $EDITOR examples/approximate_reuse/service/start_wan22_service.py    # 3. pick/add a PRESETS entry (telefuser_repo, port, KV backend)
 python examples/approximate_reuse/service/start_wan22_service.py --dry-run   # 4a. preview resolved config, no GPU/infra
 bash examples/approximate_reuse/service/start_wan22_service.sh --preset s1_rw_fluxon   # 4b. real launch (needs TeleFuser venv)
 ```
 
 > **Extras.** `[all]` = `qdrant` + `faiss` + `encoder` (vector stores + Qwen3-VL embed/rerank deps); `[dev]` = test deps. Omit both for a bare lifecycle smoke; install `[all,dev]` for real hits / rerank. torch is pinned to `2.7.0+cu126` by TeleFuser — build its venv first.
+> The launcher's `.sh` resolves the selected preset's `<telefuser_repo>/.venv/bin/python`. If your layout differs, set `PY_SVC` or run the `.py` directly with `<telefuser>/.venv/bin/python`.
 
 ---
 
@@ -182,7 +183,7 @@ All fields are defined in [`CacheConfig`](./cacheseek/service/config.py).
 | `max_skip_step` | `5` | Upper bound on how many steps a hit may skip |
 | `rerank_score_threshold` | `0.80` | Reranker hit threshold |
 | `rerank_top_k` | `5` | Number of rerank candidates |
-| `kv_store_type` | `fluxon` | KV backend; choose from open-source distributed cache substrates Fluxon / Mooncake, or local disk (`local_file`) |
+| `kv_store_type` | `local_file` | KV backend; choose local disk (`local_file`) or Fluxon for distributed deployments |
 | `vector_store_type` | `faiss` | Vector backend; FAISS for local, Qdrant recommended for service deployments |
 
 The full field list lives in the `CacheConfig` dataclass ([`./cacheseek/service/config.py`](./cacheseek/service/config.py)).
